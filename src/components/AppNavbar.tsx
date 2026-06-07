@@ -26,7 +26,7 @@ export default function AppNavbar() {
         <div className="flex items-center gap-8">
           <Link href="/dashboard" className="flex items-center">
             <Image
-              src="/logo.png"
+              src="/Logo.png"
               alt="Budget My Build"
               width={170}
               height={48}
