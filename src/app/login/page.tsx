@@ -26,22 +26,30 @@ export default function LoginPage() {
     setModalMessage("");
   }
 
-  async function signUp() {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+async function signUp() {
+  const redirectUrl =
+    window.location.hostname === "localhost"
+      ? "http://localhost:3000/login"
+      : "https://budget-my-build.vercel.app/login";
 
-    if (error) {
-      showModal("error", "Account creation failed", error.message);
-    } else {
-      showModal(
-        "success",
-        "Account created",
-        "Check your email to confirm your account before logging in.",
-      );
-    }
+  const { error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: redirectUrl,
+    },
+  });
+
+  if (error) {
+    showModal("error", "Account creation failed", error.message);
+  } else {
+    showModal(
+      "success",
+      "Account created",
+      "Check your email to confirm your account before logging in.",
+    );
   }
+}
 
   async function login() {
     const { error } = await supabase.auth.signInWithPassword({
