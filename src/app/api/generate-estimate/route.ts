@@ -121,7 +121,18 @@ function groupFeatures(features: any[]) {
     );
   });
 
-  return Object.values(groups);
+  return Object.values(groups).map((group: any) => {
+    const singleItemFeatures = ["Pool"];
+
+    if (singleItemFeatures.includes(group.feature_type)) {
+      return {
+        ...group,
+        quantity: 1,
+      };
+    }
+
+    return group;
+  });
 }
 
 function findAssumption(assumptions: any[], type: string, category: string) {
