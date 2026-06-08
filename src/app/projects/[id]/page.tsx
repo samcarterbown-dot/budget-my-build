@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import AppNavbar from "../../../components/AppNavbar";
 
@@ -202,6 +202,7 @@ function groupRoomsForCostBreakdown(rooms: any[]) {
 
 export default function ProjectPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
 
   const [project, setProject] = useState<any>(null);
   const [categories, setCategories] = useState<any[]>([]);
@@ -239,6 +240,7 @@ export default function ProjectPage() {
   const [newRoomCeilingHeight, setNewRoomCeilingHeight] = useState("");
   const [newRoomRenovationType, setNewRoomRenovationType] =
     useState("renovation");
+  const [newRoomFloorLevel, setNewRoomFloorLevel] = useState("");
   const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
   const [editRoomName, setEditRoomName] = useState("");
   const [editRoomType, setEditRoomType] = useState("");
@@ -308,6 +310,9 @@ export default function ProjectPage() {
 
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryBudget, setNewCategoryBudget] = useState("");
+  const [showQuickCategoryModal, setShowQuickCategoryModal] = useState(false);
+  const [quickCategoryName, setQuickCategoryName] = useState("");
+  const [quickCategoryBudget, setQuickCategoryBudget] = useState("");
 
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
     null,
@@ -483,6 +488,7 @@ export default function ProjectPage() {
     "Balcony",
     "Alfresco",
     "Pool",
+    "Pool Fencing",
     "Garage",
     "Carport",
     "Solar",
@@ -572,7 +578,7 @@ export default function ProjectPage() {
 
   function showNotice(
     message: string,
-    title = "Heads up",
+    title = "Before You Continue",
     tone: "info" | "success" | "warning" | "error" = "info",
   ) {
     setNoticeModal({ title, message, tone });
@@ -598,6 +604,18 @@ export default function ProjectPage() {
         },
       });
     });
+  }
+
+  function isValidOptionalUrl(value: string) {
+    const trimmed = value.trim();
+    if (!trimmed) return true;
+
+    try {
+      const parsed = new URL(trimmed);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
   }
 
   function calculateSqmTotal() {
@@ -1033,7 +1051,13 @@ export default function ProjectPage() {
       .eq("project_id", params.id)
       .order("name");
 
-    setCategories(data || []);
+    const sortedCategories = [...(data || [])].sort((a: any, b: any) => {
+      if (a.name === "Other") return 1;
+      if (b.name === "Other") return -1;
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+
+    setCategories(sortedCategories);
   }
 
   async function loadItems() {
@@ -1078,7 +1102,7 @@ export default function ProjectPage() {
       return;
     }
 
-    setPlans(data || []);
+    setPlans((data || []).filter((plan: any) => plan.file_type !== "manual"));
   }
 
   async function openPlan(storagePath: string) {
@@ -1112,6 +1136,10 @@ export default function ProjectPage() {
 
     const pagesWithUrls = await Promise.all(
       (data || []).map(async (page) => {
+        if (!page.image_path || String(page.image_path).startsWith("manual:")) {
+          return { ...page, signedUrl: null };
+        }
+
         const { data: signedUrlData } = await supabase.storage
           .from("project-plans")
           .createSignedUrl(page.image_path, 3600);
@@ -1148,7 +1176,7 @@ export default function ProjectPage() {
   }
 
   async function deletePlanPage(pageId: string) {
-    const confirmed = await askConfirm("Delete this detected page?");
+    const confirmed = await askConfirm("Delete this plan page?");
     if (!confirmed) return;
 
     const { error } = await supabase
@@ -1214,7 +1242,7 @@ export default function ProjectPage() {
 
   async function addPlanFeature() {
     if (!activeRoomPage) {
-      showNotice("Select a detected plan page first.");
+      showNotice("Select a plan page first.");
       return;
     }
 
@@ -1415,10 +1443,96 @@ export default function ProjectPage() {
     return newCategory.id;
   }
 
+  async function getOrCreateManualPlanPage() {
+    const manualPlanName = "Manual room setup";
+
+    const { data: existingPage, error: existingError } = await supabase
+      .from("plan_pages")
+      .select(
+        "*, project_plans!inner(project_id, display_name, original_filename)",
+      )
+      .eq("project_plans.project_id", params.id)
+      .eq("detected_type", "manual_entry")
+      .maybeSingle();
+
+    if (existingError) {
+      showNotice(existingError.message);
+      return null;
+    }
+
+    if (existingPage) return existingPage;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      showNotice("You must be logged in to add rooms.");
+      return null;
+    }
+
+    const { data: manualPlan, error: planError } = await supabase
+      .from("project_plans")
+      .insert({
+        project_id: params.id,
+        user_id: user.id,
+        original_filename: manualPlanName,
+        display_name: manualPlanName,
+        storage_path: `manual:${params.id}`,
+        file_type: "manual",
+        status: "manual",
+      })
+      .select("id, display_name, original_filename, project_id")
+      .single();
+
+    if (planError) {
+      showNotice(planError.message);
+      return null;
+    }
+
+    const { data: manualPage, error: pageError } = await supabase
+      .from("plan_pages")
+      .insert({
+        project_plan_id: manualPlan.id,
+        page_number: 1,
+        image_path: `manual:${params.id}`,
+        detected_type: "manual_entry",
+        is_selected: true,
+        preview_only: false,
+        floor_level: "Manual Entry",
+      })
+      .select(
+        "*, project_plans!inner(project_id, display_name, original_filename)",
+      )
+      .single();
+
+    if (pageError) {
+      showNotice(pageError.message);
+      return null;
+    }
+
+    await loadPlans();
+    await loadPlanPages();
+    return manualPage;
+  }
+
+  async function startManualRoomSetup() {
+    const manualPage = await getOrCreateManualPlanPage();
+    if (!manualPage) return;
+
+    setActiveRoomPage(manualPage);
+    setActiveRoomPageUrl("");
+    setDraftRoomBox(null);
+  }
+
   async function addPlanRoom() {
-    if (!activeRoomPage) {
-      showNotice("Select a detected plan page first.");
-      return;
+    let roomPage = activeRoomPage;
+
+    if (!roomPage) {
+      roomPage = await getOrCreateManualPlanPage();
+      if (!roomPage) return;
+      setActiveRoomPage(roomPage);
+      setActiveRoomPageUrl("");
     }
 
     if (!newRoomName.trim()) {
@@ -1431,11 +1545,11 @@ export default function ProjectPage() {
     if (!categoryId) return;
 
     const { error } = await supabase.from("plan_rooms").insert({
-      plan_page_id: activeRoomPage.id,
+      plan_page_id: roomPage.id,
       category_id: categoryId,
       room_name: newRoomName,
       room_type: newRoomType || "Other",
-      floor_level: activeRoomPage.floor_level || null,
+      floor_level: roomPage.floor_level || newRoomFloorLevel || null,
       renovation_type: newRoomRenovationType,
       length_m: Number(newRoomLengthM) || null,
       width_m: Number(newRoomWidthM) || null,
@@ -1444,10 +1558,10 @@ export default function ProjectPage() {
           ? Number(newRoomLengthM) * Number(newRoomWidthM)
           : null,
       ceiling_height: Number(newRoomCeilingHeight) || null,
-      x: draftRoomBox?.x ?? null,
-      y: draftRoomBox?.y ?? null,
-      width: draftRoomBox?.width ?? null,
-      height: draftRoomBox?.height ?? null,
+      x: null,
+      y: null,
+      width: null,
+      height: null,
     });
 
     if (error) {
@@ -1461,6 +1575,7 @@ export default function ProjectPage() {
     setNewRoomWidthM("");
     setNewRoomCeilingHeight("");
     setNewRoomRenovationType("renovation");
+    setNewRoomFloorLevel("");
     setDraftRoomBox(null);
     await markEstimateOutdated();
     loadPlanRooms();
@@ -1591,7 +1706,7 @@ export default function ProjectPage() {
 
   async function deletePlanRoom(roomId: string) {
     const confirmed = await askConfirm(
-      "Delete this detected room? Any linked budget category and cost items will remain.",
+      "Delete this identified room? Any linked budget category and cost items will remain.",
     );
     if (!confirmed) return;
 
@@ -1780,7 +1895,7 @@ export default function ProjectPage() {
 
   async function deletePlan(planId: string, storagePath: string) {
     const confirmed = await askConfirm(
-      "Delete this plan? This will also remove any detected pages and rooms linked to it.",
+      "Delete this plan? This will also remove any plan pages and rooms linked to it.",
     );
     if (!confirmed) return;
 
@@ -1891,6 +2006,35 @@ export default function ProjectPage() {
     loadCategories();
   }
 
+  async function createQuickCategory() {
+    if (!quickCategoryName.trim()) {
+      showNotice("Enter a category name.");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("project_categories")
+      .insert({
+        project_id: params.id,
+        name: quickCategoryName.trim(),
+        budget_amount: Number(quickCategoryBudget) || 0,
+        is_default: false,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      showNotice(error.message);
+      return;
+    }
+
+    setSelectedCategory(data.id);
+    setQuickCategoryName("");
+    setQuickCategoryBudget("");
+    setShowQuickCategoryModal(false);
+    await loadCategories();
+  }
+
   function startEditCategoryBudget(category: any) {
     setEditingCategoryId(category.id);
     setEditCategoryBudget(String(category.budget_amount || ""));
@@ -1926,6 +2070,13 @@ export default function ProjectPage() {
   async function createItem() {
     if (!itemName.trim()) return;
 
+    if (!isValidOptionalUrl(supplierUrl)) {
+      showNotice(
+        "Please enter a valid supplier URL starting with http:// or https://, or leave the URL blank.",
+      );
+      return;
+    }
+
     if (!selectedCategory) {
       showNotice(
         "Please select a budget category before saving this cost item.",
@@ -1949,7 +2100,7 @@ export default function ProjectPage() {
       feature_name: budgetFeatureName || null,
       item_name: itemName,
       estimated_cost: calculatedTotal,
-      supplier_url: supplierUrl,
+      supplier_url: supplierUrl.trim() || null,
       product_number: productNumber,
       supplier_name: supplierName,
       product_image_url: productImageUrl,
@@ -2014,6 +2165,13 @@ export default function ProjectPage() {
       return;
     }
 
+    if (!isValidOptionalUrl(supplierUrl)) {
+      showNotice(
+        "Please enter a valid supplier URL starting with http:// or https://.",
+      );
+      return;
+    }
+
     try {
       setIsScrapingProduct(true);
 
@@ -2043,6 +2201,9 @@ export default function ProjectPage() {
       setPricePerSqm(String(data.pricePerSqm || ""));
       setPricePerBox(String(data.pricePerBox || ""));
       setBoxCoverageSqm(String(data.boxCoverageSqm || ""));
+      maybeAutoSelectCategory(
+        `${data.productName || ""} ${data.supplierName || ""} ${data.description || ""} ${data.productNumber || ""}`,
+      );
 
       if (data.priceUnit === "sqm" && data.pricePerSqm) {
         setUseSqmPricing(true);
@@ -2205,6 +2366,22 @@ export default function ProjectPage() {
       loadLatestEstimate();
     }
   }, [params.id]);
+
+  useEffect(() => {
+    const startTab = searchParams.get("start");
+    if (
+      [
+        "overview",
+        "plans",
+        "budget",
+        "estimate",
+        "products",
+        "timeline",
+      ].includes(startTab || "")
+    ) {
+      setActiveTab(startTab || "overview");
+    }
+  }, [searchParams]);
 
   const projectTotal = useMemo(() => {
     return items.reduce((sum, item) => sum + calculateItemTotal(item), 0);
@@ -2495,15 +2672,49 @@ export default function ProjectPage() {
     }));
   }, [planFeatures]);
 
+  const sortedPlanPages = useMemo(() => {
+    const floorOrder: Record<string, number> = {
+      Basement: 0,
+      "Ground Floor": 1,
+      "First Floor": 2,
+      "Second Floor": 3,
+      "Site Plan": 4,
+      Other: 5,
+    };
+
+    return planPages.slice().sort((a, b) => {
+      const aFloor = a.floor_level || "";
+      const bFloor = b.floor_level || "";
+      const aOrder = floorOrder[aFloor] ?? 99;
+      const bOrder = floorOrder[bFloor] ?? 99;
+
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return Number(a.page_number || 0) - Number(b.page_number || 0);
+    });
+  }, [planPages]);
+
+  async function selectPlanPageForRooms(page: any) {
+    await updatePlanPage(page.id, { is_selected: true });
+    await setRoomMappingPage(page);
+    setTimeout(() => {
+      document.getElementById("rooms-identified-section")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+  }
+
   if (!project) return <p className="p-10">Loading...</p>;
 
   const budgetTarget = Number(project.budget_target || 0);
   const remainingBudget = budgetTarget - projectTotal;
   const itemCount = items.length;
 
-  const visibleCategories = categories.filter((category) =>
-    items.some((item) => item.category_id === category.id),
-  );
+  const visibleCategories = categories.slice().sort((a, b) => {
+    if (String(a.name || "").toLowerCase() === "other") return 1;
+    if (String(b.name || "").toLowerCase() === "other") return -1;
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  });
 
   const latestEstimateBreakdown = latestEstimate?.breakdown || {};
   const latestEstimateInputs = latestEstimate?.inputs || {};
@@ -2582,33 +2793,51 @@ export default function ProjectPage() {
     Number(project?.budget_target || 0) > 0,
   );
 
-  const roomsUploaded = planRooms.length > 0;
+  const plansUploaded = plans.length > 0 || planPages.length > 0;
+  const plansStepDone = plansUploaded || project?.has_plans_ready === false;
+  const roomsAdded = planRooms.length > 0;
   const featuresReviewed = planFeatures.length > 0;
   const productsEntered = items.length > 0;
+  const budgetSet =
+    Number(project?.budget_target || 0) > 0 ||
+    categories.some((category) => Number(category.budget_amount || 0) > 0);
   const estimateProduced = Boolean(latestEstimate);
+
   const readinessSteps = [
     {
-      label: "Project details",
+      label: "Project setup",
+      tab: "overview",
       done: overviewComplete,
       status: overviewComplete ? "done" : "missing",
     },
     {
-      label: "Plans & rooms",
-      done: roomsUploaded,
-      status: roomsUploaded ? "done" : "missing",
+      label:
+        project?.has_plans_ready === false ? "Plans skipped" : "Plans uploaded",
+      tab: "plans",
+      done: plansStepDone,
+      status: plansStepDone ? "done" : "missing",
     },
     {
-      label: "Key features",
+      label: "Rooms added",
+      tab: "plans",
+      done: roomsAdded,
+      status: roomsAdded ? "done" : "missing",
+    },
+    {
+      label: "Features reviewed",
+      tab: "plans",
       done: featuresReviewed,
       status: featuresReviewed ? "done" : "missing",
     },
     {
-      label: "Selections",
-      done: productsEntered,
-      status: productsEntered ? "done" : "missing",
+      label: "Budget & selections",
+      tab: "budget",
+      done: productsEntered || budgetSet,
+      status: productsEntered || budgetSet ? "done" : "missing",
     },
     {
       label: "Cost forecast",
+      tab: "estimate",
       done: estimateProduced && estimateStatus === "current",
       status:
         estimateStatus === "outdated"
@@ -2624,6 +2853,156 @@ export default function ProjectPage() {
       readinessSteps.length) *
       100,
   );
+
+  function getNextSetupTab() {
+    const nextStep = readinessSteps.find((step) => step.status !== "done");
+    return nextStep?.tab || "estimate";
+  }
+
+  function handleContinueSetup() {
+    const nextTab = getNextSetupTab();
+    setActiveTab(nextTab);
+    setTimeout(() => {
+      document.getElementById("project-main-content")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 50);
+  }
+
+  const plansInsightSteps = [
+    { label: "Plans uploaded", done: plansUploaded },
+    { label: "Rooms identified", done: roomsAdded },
+    { label: "Features identified", done: featuresReviewed },
+    { label: "Selections added", done: productsEntered },
+    { label: "Cost forecast generated", done: estimateProduced },
+  ];
+
+  const plansInsightPercent = Math.round(
+    (plansInsightSteps.filter((step) => step.done).length /
+      plansInsightSteps.length) *
+      100,
+  );
+
+  const identifiedFloorArea = planRooms.reduce(
+    (sum, room) => sum + getDisplaySqm(room),
+    0,
+  );
+
+  const windowCount = groupedPlanFeatures
+    .filter((feature: any) => getFeatureText(feature).includes("window"))
+    .reduce(
+      (sum: number, feature: any) => sum + Number(feature.quantity || 1),
+      0,
+    );
+
+  const externalDoorCount = groupedPlanFeatures
+    .filter((feature: any) => {
+      const value = getFeatureText(feature);
+      return (
+        value.includes("external door") ||
+        value.includes("entry door") ||
+        value.includes("sliding door") ||
+        value.includes("large sliding door")
+      );
+    })
+    .reduce(
+      (sum: number, feature: any) => sum + Number(feature.quantity || 1),
+      0,
+    );
+
+  const wetAreaCount = planRooms.filter((room) => {
+    const value = getRoomTypeText(room);
+    return (
+      value.includes("bath") ||
+      value.includes("ensuite") ||
+      value.includes("laundry") ||
+      value.includes("powder")
+    );
+  }).length;
+
+  const projectInsightItems = [
+    buildSummary.featureHighlights.includes("outdoor living area")
+      ? "Outdoor living area identified. This can be a meaningful cost driver depending on size, structure and finishes."
+      : "",
+    buildSummary.featureHighlights.includes("pool")
+      ? "Pool or pool-related works identified. Remember to allow for fencing, paving, services and surrounding landscaping."
+      : "",
+    windowCount >= 10
+      ? "A higher number of windows/openings has been identified. Glazing choices can have a noticeable impact on the budget."
+      : "",
+    wetAreaCount >= 3
+      ? "Multiple wet areas identified. Bathrooms, ensuites and laundries usually carry higher costs per square metre than general rooms."
+      : "",
+    identifiedFloorArea > 0
+      ? `Approximate identified floor area is ${identifiedFloorArea.toFixed(0)}m². Confirming room sizes will help improve future flooring and cost planning.`
+      : "",
+  ].filter(Boolean);
+
+  function getPlansRecommendedNextStep() {
+    if (!plansUploaded && project?.has_plans_ready !== false) {
+      return {
+        label: "Upload Plans",
+        description:
+          "Upload your plans when you have them, or continue manually if you are still early in the process.",
+        tab: "plans",
+        targetId: "plans-upload-section",
+      };
+    }
+
+    if (!roomsAdded) {
+      return {
+        label: "Add or Review Rooms",
+        description:
+          "Confirm the rooms in your project so your budget and cost forecast have a stronger foundation.",
+        tab: "plans",
+        targetId: "rooms-identified-section",
+      };
+    }
+
+    if (!featuresReviewed) {
+      return {
+        label: "Review Features",
+        description:
+          "Check windows, doors, outdoor areas and other cost-impacting features before estimating.",
+        tab: "plans",
+        targetId: "features-identified-section",
+      };
+    }
+
+    if (!productsEntered) {
+      return {
+        label: "Add Budget & Selections",
+        description:
+          "Start adding products, allowances and selections you are considering.",
+        tab: "budget",
+        targetId: "cost-item-form",
+      };
+    }
+
+    return {
+      label: "Generate Cost Forecast",
+      description:
+        "Use your project details, rooms, features and selections to generate a feasibility estimate.",
+      tab: "estimate",
+      targetId: "project-main-content",
+    };
+  }
+
+  const plansRecommendedNextStep = getPlansRecommendedNextStep();
+
+  function handlePlansRecommendedNextStep() {
+    setActiveTab(plansRecommendedNextStep.tab);
+    setTimeout(() => {
+      document
+        .getElementById(plansRecommendedNextStep.targetId)
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+    }, 50);
+  }
+
   const displayTotalBudget = Number(project?.budget_target || 0);
   const displayBuildBudget =
     Number(project?.build_budget || 0) ||
@@ -2653,6 +3032,209 @@ export default function ProjectPage() {
   const flooringDetectionText =
     `${itemName} ${selectedCategoryName} ${selectedFeatureName} ${customBudgetFeatureName}`.toLowerCase();
 
+  function normaliseSearchText(value: string) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function findSuggestedCategoryId(rawText?: string) {
+    const text = normaliseSearchText(
+      [
+        rawText,
+        itemName,
+        supplierName,
+        scrapedDescription,
+        selectedFeatureName,
+        customBudgetFeatureName,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+    if (!text || categories.length === 0) return "";
+
+    const sortedCategories = categories
+      .slice()
+      .filter((category) => normaliseSearchText(category.name) !== "other")
+      .sort(
+        (a, b) =>
+          normaliseSearchText(b.name).length -
+          normaliseSearchText(a.name).length,
+      );
+
+    const directMatch = sortedCategories.find((category) => {
+      const categoryName = normaliseSearchText(category.name);
+      return categoryName && text.includes(categoryName);
+    });
+
+    if (directMatch) return directMatch.id;
+
+    const categoryHints = [
+      {
+        category: "Windows & Doors",
+        keywords: [
+          "window",
+          "windows",
+          "door",
+          "doors",
+          "glazing",
+          "skylight",
+          "sliding",
+          "stacker",
+          "bifold",
+          "entry door",
+        ],
+      },
+      {
+        category: "Flooring",
+        keywords: [
+          "floor",
+          "flooring",
+          "tile",
+          "tiles",
+          "carpet",
+          "hybrid",
+          "timber",
+          "vinyl",
+          "laminate",
+          "underlay",
+        ],
+      },
+      {
+        category: "Kitchen",
+        keywords: [
+          "kitchen",
+          "cooktop",
+          "oven",
+          "rangehood",
+          "dishwasher",
+          "sink",
+          "benchtop",
+          "cabinetry",
+          "pantry",
+        ],
+      },
+      {
+        category: "Bathrooms & Ensuites",
+        keywords: [
+          "bathroom",
+          "ensuite",
+          "toilet",
+          "vanity",
+          "shower",
+          "bath",
+          "tapware",
+          "basin",
+          "mirror",
+        ],
+      },
+      {
+        category: "Laundry",
+        keywords: ["laundry", "washer", "dryer", "trough"],
+      },
+      {
+        category: "Lighting & Electrical",
+        keywords: [
+          "light",
+          "lighting",
+          "pendant",
+          "downlight",
+          "switch",
+          "powerpoint",
+          "electrical",
+          "fan",
+        ],
+      },
+      {
+        category: "Outdoor Living",
+        keywords: [
+          "deck",
+          "decking",
+          "alfresco",
+          "patio",
+          "pergola",
+          "balcony",
+          "outdoor",
+        ],
+      },
+      {
+        category: "Pool",
+        keywords: ["pool", "spa", "pool fence", "pool fencing", "fencing"],
+      },
+      {
+        category: "Joinery",
+        keywords: [
+          "robe",
+          "wardrobe",
+          "wir",
+          "joinery",
+          "cabinet",
+          "linen",
+          "storage",
+          "shelving",
+        ],
+      },
+      {
+        category: "Appliances",
+        keywords: [
+          "appliance",
+          "fridge",
+          "oven",
+          "cooktop",
+          "dishwasher",
+          "rangehood",
+          "microwave",
+        ],
+      },
+      {
+        category: "Siteworks",
+        keywords: [
+          "retaining",
+          "excavation",
+          "drainage",
+          "concrete",
+          "driveway",
+          "earthworks",
+        ],
+      },
+    ];
+
+    const matchedHint = categoryHints.find((hint) =>
+      hint.keywords.some((keyword) =>
+        text.includes(normaliseSearchText(keyword)),
+      ),
+    );
+
+    if (!matchedHint) return "";
+
+    const target = normaliseSearchText(matchedHint.category);
+    const targetWords = target.split(" ").filter((word) => word.length > 2);
+
+    const matchedCategory = sortedCategories.find((category) => {
+      const categoryName = normaliseSearchText(category.name);
+      return (
+        categoryName.includes(target) ||
+        target.includes(categoryName) ||
+        targetWords.some((word) => categoryName.includes(word))
+      );
+    });
+
+    return matchedCategory?.id || "";
+  }
+
+  function maybeAutoSelectCategory(rawText?: string) {
+    if (selectedCategory) return;
+
+    const suggestedCategoryId = findSuggestedCategoryId(rawText);
+    if (suggestedCategoryId) {
+      setSelectedCategory(suggestedCategoryId);
+    }
+  }
+
   const isFlooringItem =
     flooringDetectionText.includes("floor") ||
     flooringDetectionText.includes("flooring") ||
@@ -2676,9 +3258,200 @@ export default function ProjectPage() {
     );
   }
 
+  function csvCell(value: any) {
+    const text = String(value ?? "").replace(/[\r\n]+/g, " ");
+    if (/[",]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+  }
+
+  function downloadCsv(filename: string, rows: any[][]) {
+    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
+    const blob = new Blob(["\ufeff" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportBudgetItemsCsv() {
+    if (items.length === 0) {
+      showNotice("Add at least one budget item before exporting.");
+      return;
+    }
+
+    const categoryById = new Map(
+      categories.map((category) => [category.id, category.name || ""]),
+    );
+
+    const rows = [
+      [
+        "Project",
+        "Category",
+        "Item",
+        "Quantity",
+        "Unit",
+        "Estimated Cost",
+        "Total",
+        "Status",
+        "Supplier",
+        "Product Number",
+        "Supplier URL",
+        "Feature",
+        "Sqm",
+        "Cost per Sqm",
+        "Wastage Included",
+      ],
+      ...items.map((item) => [
+        project?.name || "Project",
+        categoryById.get(item.category_id) || "Uncategorised",
+        item.item_name || "",
+        Number(item.quantity || 1),
+        item.price_unit || "item",
+        Number(item.estimated_cost || 0),
+        calculateItemTotal(item),
+        item.product_status || "Planned",
+        item.supplier_name || "",
+        item.product_number || "",
+        item.supplier_url || "",
+        item.feature_name || "",
+        item.sqm || "",
+        item.cost_per_sqm || "",
+        item.include_wastage ? "Yes" : "No",
+      ]),
+    ];
+
+    downloadCsv(`${project?.name || "project"}-budget-items.csv`, rows);
+  }
+
+  function exportCostForecastCsv() {
+    if (!latestEstimate) {
+      showNotice("Generate a cost forecast before exporting.");
+      return;
+    }
+
+    const rows: any[][] = [
+      ["Project", project?.name || "Project"],
+      ["Generated", latestEstimate.created_at ? new Date(latestEstimate.created_at).toLocaleString() : new Date().toLocaleString()],
+      [],
+      ["Cost Forecast Summary"],
+      ["Likely Project Cost", likelyEstimateTotal],
+      ["Expected Planning Range Low", expectedEstimateLow],
+      ["Expected Planning Range High", expectedEstimateHigh],
+      ["Building Works Low", adjustedWorksLow],
+      ["Building Works High", adjustedWorksHigh],
+      ["Site & Project Costs Low", projectCostAdditions?.total_low || 0],
+      ["Site & Project Costs High", projectCostAdditions?.total_high || 0],
+      ["Known Selections", latestEstimate.known_items_total || 0],
+      ["Contingency Low", latestEstimate.contingency_low || 0],
+      ["Contingency High", latestEstimate.contingency_high || 0],
+      [],
+      ["Project Summary"],
+      ["Bedrooms", buildSummary.bedroomCount],
+      ["Bathrooms", buildSummary.bathroomCount],
+      ["Rooms", buildSummary.roomCount],
+      ["Features", buildSummary.featureCount],
+      ["Approx Area m2", buildSummary.totalSqm.toFixed(2)],
+    ];
+
+    const rooms = latestEstimateBreakdown.rooms || [];
+    if (rooms.length > 0) {
+      rows.push([], ["Room Cost Breakdown"], ["Room", "Type", "Sqm", "Low", "High"]);
+      rooms.forEach((room: any) => {
+        rows.push([
+          room.room_name || "",
+          room.room_type || "",
+          getDisplaySqm(room).toFixed(2),
+          room.estimate?.low || room.low || 0,
+          room.estimate?.high || room.high || 0,
+        ]);
+      });
+    }
+
+    const features = latestEstimateBreakdown.features || [];
+    if (features.length > 0) {
+      rows.push([], ["Feature Cost Breakdown"], ["Feature", "Type", "Quantity", "Area Sqm", "Length m", "Low", "High"]);
+      features.forEach((feature: any) => {
+        rows.push([
+          feature.feature_name || feature.feature_type || "",
+          feature.feature_type || "",
+          feature.quantity || 1,
+          feature.estimated_area_sqm || "",
+          feature.estimated_length_m || "",
+          feature.estimate?.low || feature.low || 0,
+          feature.estimate?.high || feature.high || 0,
+        ]);
+      });
+    }
+
+    downloadCsv(`${project?.name || "project"}-cost-forecast.csv`, rows);
+  }
+
+  function printCostForecast() {
+    if (!latestEstimate) {
+      showNotice("Generate a cost forecast before printing the report.");
+      return;
+    }
+
+    window.print();
+  }
+
   return (
     <>
       <AppNavbar />
+
+      <style jsx global>{`
+        @media print {
+          @page {
+            size: A4;
+            margin: 14mm;
+          }
+
+          body {
+            background: #ffffff !important;
+            color: #0F172A !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          nav,
+          header,
+          .no-print {
+            display: none !important;
+          }
+
+          main {
+            background: #ffffff !important;
+          }
+
+          #project-main-content {
+            max-width: none !important;
+            padding: 0 !important;
+          }
+
+          .print-report {
+            box-shadow: none !important;
+            border: 0 !important;
+          }
+
+          .print-card {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
+
+          a {
+            color: #0F172A !important;
+            text-decoration: none !important;
+          }
+        }
+      `}</style>
 
       <main className="min-h-screen bg-[#F2EEE6]">
         <header className="border-b border-[#D9D2C3]/80 bg-white/80 backdrop-blur-xl">
@@ -2709,9 +3482,12 @@ export default function ProjectPage() {
                       {project.project_stage}
                     </span>
                   )}
-                  {[project.suburb, project.state].filter(Boolean).length > 0 && (
+                  {[project.suburb, project.state].filter(Boolean).length >
+                    0 && (
                     <span className="rounded-full border border-[#D9D2C3] bg-white px-3 py-1 text-sm font-semibold text-slate-700">
-                      {[project.suburb, project.state].filter(Boolean).join(", ")}
+                      {[project.suburb, project.state]
+                        .filter(Boolean)
+                        .join(", ")}
                     </span>
                   )}
                 </div>
@@ -2759,28 +3535,39 @@ export default function ProjectPage() {
                     Planning Readiness Checklist
                   </h2>
                   <p className="text-sm text-slate-600">
-                    Complete each step to improve your cost forecast and make the project easier to compare before you commit.
+                    Complete each step to improve your cost forecast and make
+                    the project easier to compare before you commit.
                   </p>
                 </div>
 
-                <div
-                  className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                    estimateStatus === "current"
-                      ? "bg-[#2E7D6B]/10 text-[#2E7D6B]"
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div
+                    className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                      estimateStatus === "current"
+                        ? "bg-[#2E7D6B]/10 text-[#2E7D6B]"
+                        : estimateStatus === "outdated"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-white text-slate-700"
+                    }`}
+                  >
+                    {estimateStatus === "current"
+                      ? "Cost Forecast Current"
                       : estimateStatus === "outdated"
-                        ? "bg-amber-100 text-amber-800"
-                        : "bg-white text-slate-700"
-                  }`}
-                >
-                  {estimateStatus === "current"
-                    ? "Cost Forecast Current"
-                    : estimateStatus === "outdated"
-                      ? "Cost Forecast Needs Updating"
-                      : "Cost Forecast Not Started"}
+                        ? "Cost Forecast Needs Updating"
+                        : "Cost Forecast Not Started"}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleContinueSetup}
+                    className="rounded-full bg-[#4F46E5] px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md"
+                  >
+                    Continue Setup →
+                  </button>
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-5">
+              <div className="grid gap-3 md:grid-cols-6">
                 {readinessSteps.map((stage) => (
                   <div
                     key={stage.label}
@@ -2810,8 +3597,8 @@ export default function ProjectPage() {
             <div className="mt-8 flex gap-2 overflow-x-auto rounded-full border border-[#D9D2C3]/80 bg-white p-2 shadow-sm">
               {[
                 { id: "overview", label: "Project Summary" },
-                { id: "plans", label: "Plans & Drawings" },
-                { id: "budget", label: "Budget Planner" },
+                { id: "plans", label: "Plans & Insights" },
+                { id: "budget", label: "Budget & Selections" },
                 { id: "estimate", label: "Cost Forecast" },
                 { id: "products", label: "Products & Inspiration" },
                 { id: "timeline", label: "Build Journey" },
@@ -2871,161 +3658,403 @@ export default function ProjectPage() {
           </div>
         </header>
 
-        <div className="max-w-7xl mx-auto px-8 py-10">
+        <div id="project-main-content" className="max-w-7xl mx-auto px-8 py-10">
           {activeTab === "plans" && (
             <div className="space-y-6">
-              <section className="bg-white border border-dashed rounded-2xl p-8">
-                <h2 className="text-3xl font-bold mb-3">Upload Plans</h2>
-                <p className="text-gray-500 mb-6">
-                  Upload a PDF, screenshot, or image of your floor plans.
-                  Budget My Build will help identify useful pages and extract
-                  rooms for review.
-                </p>
+              <section className="overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-sm">
+                <div className="bg-gradient-to-r from-[#0F172A] to-[#1E293B] px-8 py-7 text-white">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+                    Plans & Insights
+                  </p>
+                  <div className="mt-3 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                    <div>
+                      <h2 className="text-3xl font-bold md:text-4xl">
+                        Understand what is inside your plans
+                      </h2>
+                      <p className="mt-3 max-w-3xl text-sm leading-6 text-white/70">
+                        Upload your plans to help identify rooms, features,
+                        measurements and likely cost drivers. No plans yet? You
+                        can still add rooms and features manually.
+                      </p>
+                    </div>
 
-                <div className="space-y-4">
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg,.webp"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] ?? null;
+                    <div className="min-w-[260px] rounded-2xl bg-white/10 p-4">
+                      <div className="mb-2 flex justify-between text-sm font-semibold text-white/80">
+                        <span>Plans progress</span>
+                        <span>{plansInsightPercent}%</span>
+                      </div>
+                      <div className="h-3 overflow-hidden rounded-full bg-white/20">
+                        <div
+                          className="h-full rounded-full bg-[#2E7D6B]"
+                          style={{ width: `${plansInsightPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-                      if (!file) {
-                        setPlanUploadFile(null);
-                        return;
-                      }
+                <div className="grid gap-3 border-b border-[#D9D2C3]/80 bg-[#F2EEE6] p-5 md:grid-cols-5">
+                  {plansInsightSteps.map((step) => (
+                    <div
+                      key={step.label}
+                      className={`rounded-2xl border px-4 py-3 ${
+                        step.done
+                          ? "border-[#2E7D6B]/30 bg-white"
+                          : "border-[#D9D2C3] bg-white/70"
+                      }`}
+                    >
+                      <div className="text-2xl">{step.done ? "✓" : "○"}</div>
+                      <p className="mt-2 text-sm font-semibold text-[#0F172A]">
+                        {step.label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
 
-                      const maxPdfSize = 10 * 1024 * 1024; // 10MB
-
-                      if (
-                        file.type === "application/pdf" &&
-                        file.size > maxPdfSize
-                      ) {
-                        showNotice(
-                          "This PDF is larger than 10MB. Please compress the PDF before uploading.",
-                        );
-                        e.target.value = "";
-                        setPlanUploadFile(null);
-                        return;
-                      }
-
-                      setPlanUploadFile(file);
-                    }}
-                    className="block w-full text-sm text-gray-600"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={handlePlanUpload}
-                    disabled={!planUploadFile || uploadingPlan}
-                    className="rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-gray-300"
-                  >
-                    {uploadingPlan ? "Uploading..." : "Upload Plan"}
-                  </button>
+                <div className="grid gap-4 p-6 md:grid-cols-4">
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm text-slate-500">Rooms Identified</p>
+                    <p className="mt-1 text-3xl font-bold text-[#0F172A]">
+                      {planRooms.length}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm text-slate-500">
+                      Features Identified
+                    </p>
+                    <p className="mt-1 text-3xl font-bold text-[#0F172A]">
+                      {groupedPlanFeatures.length}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm text-slate-500">Plans Uploaded</p>
+                    <p className="mt-1 text-3xl font-bold text-[#0F172A]">
+                      {plans.length}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm text-slate-500">Approx. Floor Area</p>
+                    <p className="mt-1 text-3xl font-bold text-[#0F172A]">
+                      {identifiedFloorArea > 0
+                        ? `${identifiedFloorArea.toFixed(0)}m²`
+                        : "—"}
+                    </p>
+                  </div>
                 </div>
               </section>
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                <div className="flex justify-between items-start gap-4 mb-5">
+              <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <h3 className="text-2xl font-bold">Uploaded Plans</h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                      Manage the plans attached to this project.
+                    <p className="text-sm font-semibold text-[#2E7D6B]">
+                      Project Summary
+                    </p>
+                    <h3 className="mt-2 text-2xl font-bold text-[#0F172A]">
+                      {buildSummary.headline ||
+                        "Project details will appear here"}
+                    </h3>
+                    <p className="mt-2 text-sm text-slate-500">
+                      {plansUploaded || roomsAdded || featuresReviewed
+                        ? "This summary updates as you upload plans, add rooms, review features and generate forecasts."
+                        : "Upload plans or add rooms manually to start building your project summary."}
+                    </p>
+                  </div>
+
+                  <div className="grid w-full gap-3 sm:grid-cols-3 lg:w-auto lg:min-w-[420px]">
+                    <div className="rounded-2xl bg-[#F2EEE6] p-4 text-center">
+                      <p className="text-xs text-slate-500">Windows</p>
+                      <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                        {windowCount}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-[#F2EEE6] p-4 text-center">
+                      <p className="text-xs text-slate-500">External Doors</p>
+                      <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                        {externalDoorCount}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-[#F2EEE6] p-4 text-center">
+                      <p className="text-xs text-slate-500">Wet Areas</p>
+                      <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                        {wetAreaCount}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid gap-6 lg:grid-cols-2">
+                <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+                  <p className="text-sm font-semibold text-[#2E7D6B]">
+                    Measurements Identified
+                  </p>
+                  <h3 className="mt-2 text-2xl font-bold text-[#0F172A]">
+                    Key measurements for planning
+                  </h3>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl bg-[#F2EEE6] p-4">
+                      <p className="text-xs text-slate-500">
+                        Approx. Floor Area
+                      </p>
+                      <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                        {identifiedFloorArea > 0
+                          ? `${identifiedFloorArea.toFixed(0)}m²`
+                          : "Not available yet"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-[#F2EEE6] p-4">
+                      <p className="text-xs text-slate-500">Rooms with Area</p>
+                      <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                        {
+                          planRooms.filter((room) => getDisplaySqm(room) > 0)
+                            .length
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-sm text-slate-500">
+                    Confirming room measurements helps improve flooring,
+                    selections and future cost planning.
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+                  <p className="text-sm font-semibold text-[#2E7D6B]">
+                    Project Insights
+                  </p>
+                  <h3 className="mt-2 text-2xl font-bold text-[#0F172A]">
+                    Things worth reviewing
+                  </h3>
+                  {projectInsightItems.length === 0 ? (
+                    <p className="mt-5 rounded-2xl border border-dashed p-5 text-sm text-slate-500">
+                      Insights will appear here as rooms, features and
+                      selections are added to the project.
+                    </p>
+                  ) : (
+                    <div className="mt-5 space-y-3">
+                      {projectInsightItems.map((item) => (
+                        <div
+                          key={item}
+                          className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section
+                id="plans-upload-section"
+                className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm"
+              >
+                <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-[#2E7D6B]">
+                      Plans & Insights
+                    </p>
+                    <h2 className="mt-1 text-2xl font-bold text-[#0F172A]">
+                      Upload and manage your plans
+                    </h2>
+                    <p className="mt-2 max-w-2xl text-sm text-slate-500">
+                      Upload plans when you have them, or keep building the
+                      project manually. Uploaded plans can be processed to
+                      identify useful pages, rooms, features and measurements.
                     </p>
                   </div>
 
                   <button
                     type="button"
                     onClick={loadPlans}
-                    className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] hover:shadow-md transition-all"
+                    className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:bg-[#F2EEE6] hover:shadow-md"
                   >
                     ↻ Refresh
                   </button>
                 </div>
 
-                {plans.length === 0 ? (
-                  <p className="text-gray-500">No plans uploaded yet.</p>
-                ) : (
-                  <div className="grid md:grid-cols-2 gap-5">
-                    {plans.map((plan) => (
-                      <div
-                        key={plan.id}
-                        className="border border-[#D9D2C3]/80 rounded-2xl p-5 bg-white flex justify-between gap-5 items-start"
-                      >
-                        <div className="flex-1">
-                          <h4 className="text-xl font-bold">
-                            {plan.display_name || plan.original_filename}
-                          </h4>
+                <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
+                  <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-5">
+                    <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl shadow-sm">
+                      📐
+                    </div>
+                    <h3 className="text-lg font-bold text-[#0F172A]">
+                      Add plans
+                    </h3>
+                    <p className="mt-2 text-sm text-slate-500">
+                      PDF, JPG, PNG or WEBP. PDFs must be under 10MB.
+                    </p>
 
-                          <p className="text-sm text-gray-500 mt-1">
-                            {plan.original_filename}
-                          </p>
+                    <input
+                      id="plan-upload-input"
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
 
-                          <div className="mt-3 flex gap-2 flex-wrap">
-                            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
-                              {plan.file_type?.toUpperCase() || "FILE"}
-                            </span>
+                        if (!file) {
+                          setPlanUploadFile(null);
+                          return;
+                        }
 
-                            <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
-                              {plan.status || "uploaded"}
-                            </span>
-                          </div>
+                        const maxPdfSize = 10 * 1024 * 1024;
 
-                          {String(plan.file_type || "").toLowerCase() ===
-                            "pdf" && (
-                            <div className="mt-4">
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">
-                                Pages to process
-                              </label>
-                              <input
-                                value={planPagesToProcess[plan.id] || ""}
-                                onChange={(e) =>
-                                  setPlanPagesToProcess((current) => ({
-                                    ...current,
-                                    [plan.id]: e.target.value,
-                                  }))
-                                }
-                                placeholder="e.g. 2, 5, 8"
-                                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm"
-                              />
-                              <p className="text-xs text-gray-400 mt-1">
-                                Use the actual PDF page order. Leave blank to
-                                process page 1 only.
-                              </p>
-                            </div>
-                          )}
-                        </div>
+                        if (
+                          file.type === "application/pdf" &&
+                          file.size > maxPdfSize
+                        ) {
+                          showNotice(
+                            "This PDF is larger than 10MB. Please compress the PDF before uploading.",
+                          );
+                          e.target.value = "";
+                          setPlanUploadFile(null);
+                          return;
+                        }
 
-                        <div className="flex gap-3 text-sm shrink-0 flex-wrap justify-end">
-                          <button
-                            onClick={() => processPlan(plan.id)}
-                            disabled={processingPlanId === plan.id}
-                            className="rounded-full bg-gradient-to-r from-[#2E7D6B] to-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
-                          >
-                            {processingPlanId === plan.id
-                              ? "Processing..."
-                              : "⚡ Process"}
-                          </button>
+                        setPlanUploadFile(file);
+                      }}
+                      className="hidden"
+                    />
 
-                          <button
-                            onClick={() => openPlan(plan.storage_path)}
-                            className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
-                          >
-                            👁 Open
-                          </button>
+                    <label
+                      htmlFor="plan-upload-input"
+                      className="mt-4 flex cursor-pointer items-center justify-center rounded-2xl border border-[#D9D2C3] bg-white px-4 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                    >
+                      Choose file
+                    </label>
 
-                          <button
-                            onClick={() =>
-                              deletePlan(plan.id, plan.storage_path)
-                            }
-                            className="rounded-full bg-gradient-to-r from-red-500 to-pink-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
-                          >
-                            🗑 Delete
-                          </button>
-                        </div>
+                    {planUploadFile && (
+                      <div className="mt-4 rounded-2xl border border-[#D9D2C3]/80 bg-white p-3">
+                        <p className="text-xs font-semibold text-slate-500">
+                          Selected file
+                        </p>
+                        <p className="mt-1 break-words text-sm font-semibold text-[#0F172A]">
+                          {planUploadFile.name}
+                        </p>
                       </div>
-                    ))}
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handlePlanUpload}
+                      disabled={!planUploadFile || uploadingPlan}
+                      className="mt-4 w-full rounded-2xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md disabled:cursor-not-allowed disabled:bg-gray-300 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
+                    >
+                      {uploadingPlan ? "Uploading..." : "Upload Plan"}
+                    </button>
                   </div>
-                )}
+
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-xl font-bold text-[#0F172A]">
+                          Uploaded Plans
+                        </h3>
+                        <p className="text-sm text-slate-500">
+                          Open, process or delete plans attached to this
+                          project.
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-[#F2EEE6] px-3 py-1 text-xs font-semibold text-slate-600">
+                        {plans.length} uploaded
+                      </span>
+                    </div>
+
+                    {plans.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-6 text-center">
+                        <div className="mb-3 text-4xl">📄</div>
+                        <h4 className="text-lg font-bold text-[#0F172A]">
+                          No plans uploaded yet
+                        </h4>
+                        <p className="mx-auto mt-2 max-w-lg text-sm text-slate-500">
+                          You can still create rooms manually, add features,
+                          track products and generate budgets. Uploading plans
+                          helps provide a more complete project summary.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {plans.map((plan) => (
+                          <div
+                            key={plan.id}
+                            className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 shadow-sm"
+                          >
+                            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <h4 className="truncate text-lg font-bold text-[#0F172A]">
+                                  {plan.display_name || plan.original_filename}
+                                </h4>
+                                <p className="mt-1 truncate text-sm text-slate-500">
+                                  {plan.original_filename}
+                                </p>
+
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                                    {plan.file_type?.toUpperCase() || "FILE"}
+                                  </span>
+                                  <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
+                                    {plan.status || "uploaded"}
+                                  </span>
+                                </div>
+
+                                {String(plan.file_type || "").toLowerCase() ===
+                                  "pdf" && (
+                                  <div className="mt-4">
+                                    <label className="mb-1 block text-xs font-semibold text-gray-500">
+                                      Pages to process
+                                    </label>
+                                    <input
+                                      value={planPagesToProcess[plan.id] || ""}
+                                      onChange={(e) =>
+                                        setPlanPagesToProcess((current) => ({
+                                          ...current,
+                                          [plan.id]: e.target.value,
+                                        }))
+                                      }
+                                      placeholder="e.g. 2, 5, 8"
+                                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm"
+                                    />
+                                    <p className="mt-1 text-xs text-gray-400">
+                                      Leave blank to process page 1 only.
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex shrink-0 flex-wrap gap-2 xl:justify-end">
+                                <button
+                                  onClick={() => processPlan(plan.id)}
+                                  disabled={processingPlanId === plan.id}
+                                  className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] disabled:opacity-50 disabled:hover:translate-y-0"
+                                >
+                                  {processingPlanId === plan.id
+                                    ? "Processing..."
+                                    : "Process"}
+                                </button>
+
+                                <button
+                                  onClick={() => openPlan(plan.storage_path)}
+                                  className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-[#F2EEE6]"
+                                >
+                                  Open
+                                </button>
+
+                                <button
+                                  onClick={() =>
+                                    deletePlan(plan.id, plan.storage_path)
+                                  }
+                                  className="rounded-full bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </section>
 
               <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
@@ -3042,15 +4071,31 @@ export default function ProjectPage() {
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    {planPages.map((page) => (
+                    {sortedPlanPages.map((page) => (
                       <div
                         key={page.id}
-                        className="border border-[#D9D2C3]/80 rounded-2xl p-5 bg-white flex flex-col md:flex-row md:items-center justify-between gap-5"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => selectPlanPageForRooms(page)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            selectPlanPageForRooms(page);
+                          }
+                        }}
+                        className={`cursor-pointer rounded-2xl border p-5 bg-white flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all hover:-translate-y-0.5 hover:shadow-lg ${
+                          activeRoomPage?.id === page.id || page.is_selected
+                            ? "border-[#4F46E5] ring-2 ring-[#4F46E5]/20 shadow-md"
+                            : "border-[#D9D2C3]/80"
+                        }`}
                       >
                         {page.signedUrl && (
                           <button
                             type="button"
-                            onClick={() => openPlanPage(page.image_path)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openPlanPage(page.image_path);
+                            }}
                             className="w-full md:w-40 shrink-0 overflow-hidden rounded-2xl border bg-gray-100 hover:shadow-md transition-all"
                           >
                             <img
@@ -3087,7 +4132,10 @@ export default function ProjectPage() {
                                   : "bg-gray-100 text-gray-600"
                               }`}
                             >
-                              {page.is_selected ? "Selected" : "Not selected"}
+                              {activeRoomPage?.id === page.id ||
+                              page.is_selected
+                                ? "Active floor"
+                                : "Click to review"}
                             </span>
 
                             <span
@@ -3111,6 +4159,7 @@ export default function ProjectPage() {
                         <div className="flex flex-wrap gap-3 md:justify-end">
                           <select
                             value={page.floor_level || ""}
+                            onClick={(event) => event.stopPropagation()}
                             onChange={(e) =>
                               updatePlanPage(page.id, {
                                 floor_level: e.target.value || null,
@@ -3129,39 +4178,46 @@ export default function ProjectPage() {
                           </select>
 
                           <button
-                            onClick={() =>
-                              updatePlanPage(page.id, {
-                                is_selected: !page.is_selected,
-                              })
-                            }
-                            className={`rounded-full px-4 py-2 text-sm font-semibold shadow-md hover:scale-105 hover:shadow-lg transition-all ${
-                              page.is_selected
-                                ? "bg-gray-900 text-white"
-                                : "bg-gray-100 text-gray-700"
-                            }`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              selectPlanPageForRooms(page);
+                            }}
+                            className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg"
                           >
-                            {page.is_selected ? "✓ Selected" : "Select"}
+                            Review this floor
                           </button>
 
                           <button
-                            onClick={() => setRoomMappingPage(page)}
-                            className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              suggestRoomsForPage(page.id);
+                            }}
+                            disabled={suggestingRoomsPageId === page.id}
+                            className="rounded-full bg-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#256B5C] hover:shadow-lg disabled:opacity-50"
                           >
-                            🏠 Rooms
+                            {suggestingRoomsPageId === page.id
+                              ? "Preparing..."
+                              : "Suggest rooms & features"}
                           </button>
 
                           <button
-                            onClick={() => openPlanPage(page.image_path)}
-                            className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openPlanPage(page.image_path);
+                            }}
+                            className="rounded-full border border-[#D9D2C3] bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-[#F2EEE6] hover:shadow-md"
                           >
-                            👁 Open
+                            Open
                           </button>
 
                           <button
-                            onClick={() => deletePlanPage(page.id)}
-                            className="rounded-full bg-gradient-to-r from-red-500 to-pink-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deletePlanPage(page.id);
+                            }}
+                            className="rounded-full bg-red-50 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100"
                           >
-                            🗑 Delete
+                            Delete
                           </button>
                         </div>
                       </div>
@@ -3170,13 +4226,18 @@ export default function ProjectPage() {
                 )}
               </section>
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section
+                id="rooms-identified-section"
+                className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8"
+              >
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
                   <div>
-                    <h3 className="text-2xl font-bold mb-3">Detected Rooms</h3>
+                    <h3 className="text-2xl font-bold mb-3">
+                      Rooms Identified
+                    </h3>
                     <p className="text-gray-500">
-                      Select a detected plan page, add rooms manually, or ask AI
-                      to suggest rooms for the selected page.
+                      Select a plan page, add rooms manually, or generate room
+                      and feature suggestions for review.
                     </p>
                     {activeRoomPage && (
                       <p className="text-sm text-gray-500 mt-2">
@@ -3196,27 +4257,143 @@ export default function ProjectPage() {
                       className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-5 py-3 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
                     >
                       {suggestingRoomsPageId === activeRoomPage.id
-                        ? "Suggesting..."
-                        : "✨ Suggest Rooms"}
+                        ? "Preparing Suggestions..."
+                        : "Suggest Rooms & Features"}
                     </button>
                   )}
                 </div>
 
                 {!activeRoomPage ? (
                   <div className="space-y-5">
-                    <div className="rounded-2xl border border-dashed p-6 text-gray-500 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="rounded-2xl border border-dashed p-6 text-gray-600 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                       <p>
-                        Select the 🏠 Rooms button on a detected plan page to
-                        start adding or editing rooms.
+                        You can add rooms manually even if you do not have plans
+                        yet. If you upload plans later, project suggestions can
+                        still help refine this list.
                       </p>
 
-                      <button
-                        type="button"
-                        onClick={loadPlanRooms}
-                        className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] hover:shadow-md transition-all"
-                      >
-                        ↻ Refresh Rooms
-                      </button>
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          onClick={startManualRoomSetup}
+                          className="rounded-full bg-[#4F46E5] px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#4338CA]"
+                        >
+                          Add rooms manually
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={loadPlanRooms}
+                          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] hover:shadow-md transition-all"
+                        >
+                          ↻ Refresh Rooms
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-5">
+                      <h4 className="mb-4 text-xl font-bold text-[#0F172A]">
+                        Add Room Manually
+                      </h4>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Room name
+                          </label>
+                          <input
+                            className="border rounded-xl p-3 w-full bg-white"
+                            placeholder="e.g. Kitchen"
+                            value={newRoomName}
+                            onChange={(e) => setNewRoomName(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Room type
+                          </label>
+                          <select
+                            className="border rounded-xl p-3 w-full bg-white"
+                            value={newRoomType}
+                            onChange={(e) => setNewRoomType(e.target.value)}
+                          >
+                            <option value="">Room type</option>
+                            {roomTypes.map((type) => (
+                              <option key={type} value={type}>
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Floor level optional
+                          </label>
+                          <input
+                            className="border rounded-xl p-3 w-full bg-white"
+                            placeholder="e.g. Ground Floor"
+                            value={newRoomFloorLevel}
+                            onChange={(e) =>
+                              setNewRoomFloorLevel(e.target.value)
+                            }
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Length (m)
+                          </label>
+                          <input
+                            className="border rounded-xl p-3 w-full bg-white"
+                            type="number"
+                            value={newRoomLengthM}
+                            onChange={(e) => setNewRoomLengthM(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Width (m)
+                          </label>
+                          <input
+                            className="border rounded-xl p-3 w-full bg-white"
+                            type="number"
+                            value={newRoomWidthM}
+                            onChange={(e) => setNewRoomWidthM(e.target.value)}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Ceiling height (m)
+                          </label>
+                          <input
+                            className="border rounded-xl p-3 w-full bg-white"
+                            type="number"
+                            value={newRoomCeilingHeight}
+                            onChange={(e) =>
+                              setNewRoomCeilingHeight(e.target.value)
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-gray-700">
+                          Calculated area:{" "}
+                          {Number(newRoomLengthM) && Number(newRoomWidthM)
+                            ? `${(Number(newRoomLengthM) * Number(newRoomWidthM)).toFixed(2)} sqm`
+                            : "Enter length and width"}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={addPlanRoom}
+                          className="rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                        >
+                          Add Room
+                        </button>
+                      </div>
                     </div>
 
                     {planRooms.length > 0 && (
@@ -3304,6 +4481,9 @@ export default function ProjectPage() {
                       </p>
 
                       <div className="space-y-4">
+                        <label className="mb-1 block text-sm font-semibold text-gray-700">
+                          Room name
+                        </label>
                         <input
                           className="border rounded-xl p-4 w-full bg-white"
                           placeholder="Room name, e.g. Kitchen"
@@ -3311,6 +4491,9 @@ export default function ProjectPage() {
                           onChange={(e) => setNewRoomName(e.target.value)}
                         />
 
+                        <label className="mb-1 block text-sm font-semibold text-gray-700">
+                          Room type
+                        </label>
                         <select
                           className="border rounded-xl p-4 w-full bg-white"
                           value={newRoomType}
@@ -3325,21 +4508,33 @@ export default function ProjectPage() {
                         </select>
 
                         <div className="grid grid-cols-2 gap-3">
-                          <input
-                            className="border rounded-xl p-4 w-full bg-white"
-                            placeholder="Length (m)"
-                            type="number"
-                            value={newRoomLengthM}
-                            onChange={(e) => setNewRoomLengthM(e.target.value)}
-                          />
+                          <div>
+                            <label className="mb-1 block text-sm font-semibold text-gray-700">
+                              Length (m)
+                            </label>
+                            <input
+                              className="border rounded-xl p-4 w-full bg-white"
+                              placeholder="e.g. 4.2"
+                              type="number"
+                              value={newRoomLengthM}
+                              onChange={(e) =>
+                                setNewRoomLengthM(e.target.value)
+                              }
+                            />
+                          </div>
 
-                          <input
-                            className="border rounded-xl p-4 w-full bg-white"
-                            placeholder="Width (m)"
-                            type="number"
-                            value={newRoomWidthM}
-                            onChange={(e) => setNewRoomWidthM(e.target.value)}
-                          />
+                          <div>
+                            <label className="mb-1 block text-sm font-semibold text-gray-700">
+                              Width (m)
+                            </label>
+                            <input
+                              className="border rounded-xl p-4 w-full bg-white"
+                              placeholder="e.g. 3.6"
+                              type="number"
+                              value={newRoomWidthM}
+                              onChange={(e) => setNewRoomWidthM(e.target.value)}
+                            />
+                          </div>
                         </div>
 
                         <div className="rounded-2xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-700">
@@ -3349,31 +4544,43 @@ export default function ProjectPage() {
                             : "Enter length and width"}
                         </div>
 
-                        <input
-                          className="border rounded-xl p-4 w-full bg-white"
-                          placeholder="Ceiling height (m), e.g. 2.7"
-                          type="number"
-                          value={newRoomCeilingHeight}
-                          onChange={(e) =>
-                            setNewRoomCeilingHeight(e.target.value)
-                          }
-                        />
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Ceiling height (m)
+                          </label>
+                          <input
+                            className="border rounded-xl p-4 w-full bg-white"
+                            placeholder="e.g. 2.7"
+                            type="number"
+                            value={newRoomCeilingHeight}
+                            onChange={(e) =>
+                              setNewRoomCeilingHeight(e.target.value)
+                            }
+                          />
+                        </div>
 
-                        <select
-                          className="border rounded-xl p-4 w-full bg-white"
-                          value={newRoomRenovationType}
-                          onChange={(e) =>
-                            setNewRoomRenovationType(e.target.value)
-                          }
-                        >
-                          <option value="renovation">Renovation</option>
-                          <option value="extension">Extension</option>
-                          <option value="existing">Existing / retained</option>
-                        </select>
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                            Room work type
+                          </label>
+                          <select
+                            className="border rounded-xl p-4 w-full bg-white"
+                            value={newRoomRenovationType}
+                            onChange={(e) =>
+                              setNewRoomRenovationType(e.target.value)
+                            }
+                          >
+                            <option value="renovation">Renovation</option>
+                            <option value="extension">Extension</option>
+                            <option value="existing">
+                              Existing / retained
+                            </option>
+                          </select>
+                        </div>
 
                         <button
                           onClick={addPlanRoom}
-                          className="w-full rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
+                          className="w-full rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
                         >
                           Add Room
                         </button>
@@ -3381,144 +4588,62 @@ export default function ProjectPage() {
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">
-                      {activeRoomPageUrl && (
-                        <div className="border border-[#D9D2C3]/80 rounded-2xl p-4 bg-white">
-                          <div className="flex justify-between items-center gap-4 mb-4">
-                            <div>
-                              <h4 className="text-xl font-bold">
-                                Visual Room Mapper
-                              </h4>
-                              <p className="text-sm text-gray-500">
-                                Click and drag over the plan image to draw a
-                                room box. Then attach the box to one of the
-                                saved rooms below.
-                              </p>
-                              {activeRoomPage?.scale_mm_per_percent && (
-                                <p className="text-xs text-green-700 font-medium mt-1">
-                                  Scale calibrated:{" "}
-                                  {Math.round(
-                                    Number(activeRoomPage.scale_real_mm || 0),
-                                  ).toLocaleString()}
-                                  mm reference
-                                </p>
-                              )}
-                            </div>
-
-                            {draftScaleLine && (
-                              <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                                <line
-                                  x1={`${draftScaleLine.x1}%`}
-                                  y1={`${draftScaleLine.y1}%`}
-                                  x2={`${draftScaleLine.x2}%`}
-                                  y2={`${draftScaleLine.y2}%`}
-                                  stroke="#f59e0b"
-                                  strokeWidth="3"
-                                  strokeDasharray="8 4"
-                                />
-                              </svg>
-                            )}
-
-                            {draftRoomBox && (
-                              <div
-                                className="absolute border-2 border-emerald-600 bg-emerald-500/20 rounded-md pointer-events-none"
-                                style={{
-                                  left: `${draftRoomBox.x}%`,
-                                  top: `${draftRoomBox.y}%`,
-                                  width: `${draftRoomBox.width}%`,
-                                  height: `${draftRoomBox.height}%`,
-                                }}
-                              >
-                                <span className="absolute left-1 top-1 rounded bg-white/90 px-2 py-1 text-xs font-bold text-emerald-700 shadow-sm">
-                                  Draft box
-                                </span>
-                              </div>
-                            )}
+                      <div className="overflow-hidden rounded-2xl border border-[#D9D2C3]/80 bg-white shadow-sm">
+                        <div className="flex flex-col gap-3 border-b border-[#D9D2C3]/80 bg-[#F2EEE6] px-5 py-4 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-[#2E7D6B]">
+                              Selected floor plan
+                            </p>
+                            <h4 className="mt-1 text-xl font-bold text-[#0F172A]">
+                              {activeRoomPage.project_plans?.display_name ||
+                                activeRoomPage.project_plans
+                                  ?.original_filename ||
+                                "Plan"}{" "}
+                              — Page {activeRoomPage.page_number}
+                            </h4>
+                            <p className="mt-1 text-sm text-slate-500">
+                              Use this plan as a visual reference while you
+                              review or add rooms.
+                            </p>
                           </div>
 
-                          {scaleMode && (
-                            <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                              <label className="block text-sm font-semibold text-amber-900 mb-2">
-                                Real length of drawn scale line, in mm
-                              </label>
-                              <div className="flex flex-col sm:flex-row gap-3">
-                                <input
-                                  type="number"
-                                  placeholder="e.g. 4000"
-                                  value={scaleRealMm}
-                                  onChange={(e) =>
-                                    setScaleRealMm(e.target.value)
-                                  }
-                                  className="border rounded-xl p-3 bg-white flex-1"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={savePlanPageScale}
-                                  disabled={!draftScaleLine || !scaleRealMm}
-                                  className="rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white disabled:bg-gray-300 disabled:cursor-not-allowed"
-                                >
-                                  Save Scale
-                                </button>
-                              </div>
-                            </div>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              suggestRoomsForPage(activeRoomPage.id)
+                            }
+                            disabled={
+                              suggestingRoomsPageId === activeRoomPage.id
+                            }
+                            className="rounded-full bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg disabled:opacity-50"
+                          >
+                            {suggestingRoomsPageId === activeRoomPage.id
+                              ? "Preparing Suggestions..."
+                              : "Suggest Rooms & Features"}
+                          </button>
+                        </div>
 
-                          <div
-                            className="relative overflow-hidden rounded-2xl border bg-gray-100 cursor-crosshair select-none"
-                            onMouseDown={handleRoomMapMouseDown}
-                            onMouseMove={handleRoomMapMouseMove}
-                            onMouseUp={handleRoomMapMouseUp}
-                            onMouseLeave={handleRoomMapMouseUp}
+                        {activeRoomPageUrl ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openPlanPage(activeRoomPage.image_path)
+                            }
+                            className="block w-full bg-white p-4 text-left"
                           >
                             <img
                               src={activeRoomPageUrl}
-                              alt="Selected plan page"
-                              className="w-full block pointer-events-none"
+                              alt="Selected floor plan"
+                              className="max-h-[520px] w-full rounded-2xl border border-[#D9D2C3]/80 object-contain bg-white"
                             />
-
-                            {planRooms
-                              .filter(
-                                (room) =>
-                                  room.plan_page_id === activeRoomPage.id &&
-                                  room.x !== null &&
-                                  room.y !== null &&
-                                  room.width !== null &&
-                                  room.height !== null,
-                              )
-                              .map((room) => (
-                                <div
-                                  key={room.id}
-                                  className="absolute border-2 border-purple-600 bg-purple-500/20 rounded-md pointer-events-none"
-                                  style={{
-                                    left: `${room.x}%`,
-                                    top: `${room.y}%`,
-                                    width: `${room.width}%`,
-                                    height: `${room.height}%`,
-                                  }}
-                                >
-                                  <span className="absolute left-1 top-1 rounded bg-white/90 px-2 py-1 text-xs font-bold text-purple-700 shadow-sm">
-                                    {room.room_name}
-                                  </span>
-                                </div>
-                              ))}
-
-                            {draftRoomBox && (
-                              <div
-                                className="absolute border-2 border-emerald-600 bg-emerald-500/20 rounded-md pointer-events-none"
-                                style={{
-                                  left: `${draftRoomBox.x}%`,
-                                  top: `${draftRoomBox.y}%`,
-                                  width: `${draftRoomBox.width}%`,
-                                  height: `${draftRoomBox.height}%`,
-                                }}
-                              >
-                                <span className="absolute left-1 top-1 rounded bg-white/90 px-2 py-1 text-xs font-bold text-emerald-700 shadow-sm">
-                                  New room
-                                </span>
-                              </div>
-                            )}
+                          </button>
+                        ) : (
+                          <div className="p-6 text-sm text-slate-500">
+                            This room list was created manually. Upload and
+                            process plans to show a floor plan preview here.
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
 
                       {planRooms.filter(
                         (room) => room.plan_page_id === activeRoomPage.id,
@@ -3550,49 +4675,69 @@ export default function ProjectPage() {
                                 >
                                   {editingRoomId === room.id ? (
                                     <div className="space-y-4">
-                                      <input
-                                        className="border rounded-xl p-3 w-full bg-white"
-                                        placeholder="Room name"
-                                        value={editRoomName}
-                                        onChange={(e) =>
-                                          setEditRoomName(e.target.value)
-                                        }
-                                      />
+                                      <div>
+                                        <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                          Room name
+                                        </label>
+                                        <input
+                                          className="border rounded-xl p-3 w-full bg-white"
+                                          placeholder="e.g. Kitchen"
+                                          value={editRoomName}
+                                          onChange={(e) =>
+                                            setEditRoomName(e.target.value)
+                                          }
+                                        />
+                                      </div>
 
-                                      <select
-                                        className="border rounded-xl p-3 w-full bg-white"
-                                        value={editRoomType}
-                                        onChange={(e) =>
-                                          setEditRoomType(e.target.value)
-                                        }
-                                      >
-                                        {roomTypes.map((type) => (
-                                          <option key={type} value={type}>
-                                            {type}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      <div>
+                                        <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                          Room type
+                                        </label>
+                                        <select
+                                          className="border rounded-xl p-3 w-full bg-white"
+                                          value={editRoomType}
+                                          onChange={(e) =>
+                                            setEditRoomType(e.target.value)
+                                          }
+                                        >
+                                          {roomTypes.map((type) => (
+                                            <option key={type} value={type}>
+                                              {type}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
 
                                       <div className="grid grid-cols-2 gap-3">
-                                        <input
-                                          className="border rounded-xl p-3 w-full bg-white"
-                                          placeholder="Length (m)"
-                                          type="number"
-                                          value={editRoomLengthM}
-                                          onChange={(e) =>
-                                            setEditRoomLengthM(e.target.value)
-                                          }
-                                        />
+                                        <div>
+                                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                            Length (m)
+                                          </label>
+                                          <input
+                                            className="border rounded-xl p-3 w-full bg-white"
+                                            placeholder="e.g. 4.2"
+                                            type="number"
+                                            value={editRoomLengthM}
+                                            onChange={(e) =>
+                                              setEditRoomLengthM(e.target.value)
+                                            }
+                                          />
+                                        </div>
 
-                                        <input
-                                          className="border rounded-xl p-3 w-full bg-white"
-                                          placeholder="Width (m)"
-                                          type="number"
-                                          value={editRoomWidthM}
-                                          onChange={(e) =>
-                                            setEditRoomWidthM(e.target.value)
-                                          }
-                                        />
+                                        <div>
+                                          <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                            Width (m)
+                                          </label>
+                                          <input
+                                            className="border rounded-xl p-3 w-full bg-white"
+                                            placeholder="e.g. 3.6"
+                                            type="number"
+                                            value={editRoomWidthM}
+                                            onChange={(e) =>
+                                              setEditRoomWidthM(e.target.value)
+                                            }
+                                          />
+                                        </div>
                                       </div>
 
                                       <div className="rounded-2xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-700">
@@ -3603,10 +4748,13 @@ export default function ProjectPage() {
                                           : "Enter length and width"}
                                       </div>
 
-                                      <div className="grid grid-cols-1 gap-3">
+                                      <div>
+                                        <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                          Ceiling height (m)
+                                        </label>
                                         <input
                                           className="border rounded-xl p-3 w-full bg-white"
-                                          placeholder="Ceiling height (m)"
+                                          placeholder="e.g. 2.7"
                                           type="number"
                                           value={editRoomCeilingHeight}
                                           onChange={(e) =>
@@ -3617,25 +4765,30 @@ export default function ProjectPage() {
                                         />
                                       </div>
 
-                                      <select
-                                        className="border rounded-xl p-3 w-full bg-white"
-                                        value={editRoomRenovationType}
-                                        onChange={(e) =>
-                                          setEditRoomRenovationType(
-                                            e.target.value,
-                                          )
-                                        }
-                                      >
-                                        <option value="renovation">
-                                          Renovation
-                                        </option>
-                                        <option value="extension">
-                                          Extension
-                                        </option>
-                                        <option value="existing">
-                                          Existing / retained
-                                        </option>
-                                      </select>
+                                      <div>
+                                        <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                          Room work type
+                                        </label>
+                                        <select
+                                          className="border rounded-xl p-3 w-full bg-white"
+                                          value={editRoomRenovationType}
+                                          onChange={(e) =>
+                                            setEditRoomRenovationType(
+                                              e.target.value,
+                                            )
+                                          }
+                                        >
+                                          <option value="renovation">
+                                            Renovation
+                                          </option>
+                                          <option value="extension">
+                                            Extension
+                                          </option>
+                                          <option value="existing">
+                                            Existing / retained
+                                          </option>
+                                        </select>
+                                      </div>
 
                                       <div className="flex gap-3">
                                         <button
@@ -3666,17 +4819,6 @@ export default function ProjectPage() {
                                         </div>
 
                                         <div className="flex gap-2">
-                                          {draftRoomBox && (
-                                            <button
-                                              onClick={() =>
-                                                attachDraftBoxToRoom(room.id)
-                                              }
-                                              className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                                            >
-                                              Attach box
-                                            </button>
-                                          )}
-
                                           <button
                                             onClick={() =>
                                               startEditPlanRoom(room)
@@ -3747,11 +4889,14 @@ export default function ProjectPage() {
                 )}
               </section>
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section
+                id="features-identified-section"
+                className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8"
+              >
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
                   <div>
                     <h3 className="text-2xl font-bold mb-3">
-                      Detected Features
+                      Features Identified
                     </h3>
                     <p className="text-gray-500">
                       High-level cost-impacting items detected from the plan,
@@ -3868,7 +5013,7 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={addPlanFeature}
-                    className="mt-4 rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
+                    className="mt-4 rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
                   >
                     Add Feature
                   </button>
@@ -3876,8 +5021,8 @@ export default function ProjectPage() {
 
                 {groupedPlanFeatures.length === 0 ? (
                   <div className="rounded-2xl border border-dashed p-6 text-gray-500">
-                    No detected features yet. Use ✨ Suggest Rooms on a selected
-                    plan page to detect rooms and features.
+                    No features identified yet. Select a plan page, then use
+                    Suggest Rooms & Features to prepare items for review.
                   </div>
                 ) : (
                   <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -4028,7 +5173,7 @@ export default function ProjectPage() {
                                   <button
                                     onClick={async () => {
                                       const confirmed = await askConfirm(
-                                        "Delete all detected features in this group?",
+                                        "Delete all features identified in this group?",
                                       );
                                       if (!confirmed) return;
 
@@ -4110,892 +5255,1276 @@ export default function ProjectPage() {
           )}
 
           {activeTab === "budget" && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="space-y-8">
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-6">
-                  <h2 className="text-2xl font-bold mb-5">Add Category</h2>
-
-                  <input
-                    className="border rounded-xl p-4 block w-full mb-4"
-                    placeholder="Category name"
-                    value={newCategoryName}
-                    onChange={(e) => setNewCategoryName(e.target.value)}
-                  />
-
-                  <input
-                    className="border rounded-xl p-4 block w-full mb-4"
-                    placeholder="Category budget"
-                    type="number"
-                    value={newCategoryBudget}
-                    onChange={(e) => setNewCategoryBudget(e.target.value)}
-                  />
-
-                  <button
-                    onClick={createCategory}
-                    className="bg-[#0F172A] text-white rounded-xl px-5 py-3 w-full"
-                  >
-                    Add Category
-                  </button>
-                </section>
-
-                <section
-                  id="cost-item-form"
-                  className={
-                    editingItemId
-                      ? "fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4"
-                      : `bg-white border border-[#D9D2C3]/80 rounded-2xl p-6 transition-all duration-500 ${
-                          itemFormPulse
-                            ? "ring-4 ring-blue-300 shadow-2xl scale-[1.01]"
-                            : ""
-                        }`
-                  }
-                >
-                  <div
-                    className={
-                      editingItemId
-                        ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-2xl"
-                        : ""
-                    }
-                  >
-                    <h2 className="text-2xl font-bold mb-2">
-                      {editingItemId ? "Edit Cost Item" : "Add Cost Item"}
-                    </h2>
-
-                    {editingItemId && (
-                      <p className="text-sm text-blue-600 font-medium mb-5">
-                        You are editing an existing cost item. Save changes when
-                        done.
+            <div className="space-y-8">
+              <section className="overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-sm">
+                <div className="bg-gradient-to-r from-[#0F172A] to-[#1E293B] px-7 py-6 text-white">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+                        Budget & Selections
                       </p>
-                    )}
-
-                    <input
-                      className="border rounded-xl p-4 block w-full mb-4"
-                      placeholder="Item name"
-                      value={itemName}
-                      onChange={(e) => setItemName(e.target.value)}
-                    />
-                    <input
-                      className="border rounded-xl p-4 block w-full mb-4"
-                      placeholder="Quantity"
-                      type="number"
-                      min="1"
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value)}
-                    />
-
-                    <input
-                      className="border rounded-xl p-4 block w-full mb-4"
-                      placeholder="Supplier URL"
-                      value={supplierUrl}
-                      onChange={(e) => setSupplierUrl(e.target.value)}
-                    />
+                      <h2 className="mt-2 text-3xl font-bold">
+                        Plan what you are choosing and what it may cost
+                      </h2>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70">
+                        Add products, allowances and selection ideas. You can import
+                        product details from a URL, connect items to rooms or
+                        features, and keep category budgets updated as your choices
+                        become clearer.
+                      </p>
+                    </div>
 
                     <button
-                      onClick={scrapeProductInfo}
-                      disabled={isScrapingProduct}
-                      className="mb-4 w-full rounded-2xl bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] text-white px-5 py-4 font-semibold shadow-lg hover:scale-[1.01] transition-all disabled:opacity-50"
+                      type="button"
+                      onClick={exportBudgetItemsCsv}
+                      className="rounded-2xl border border-white/20 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F2EEE6]"
                     >
-                      {isScrapingProduct
-                        ? "Importing Product Details..."
-                        : "✨ Import Product Details"}
+                      Export Budget Items CSV
                     </button>
+                  </div>
+                </div>
+                <div className="grid gap-4 p-6 md:grid-cols-4">
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-5">
+                    <p className="text-sm font-semibold text-slate-500">
+                      Target Budget
+                    </p>
+                    <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                      ${formatMoney(budgetTarget)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">
+                      Tracked Selections
+                    </p>
+                    <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                      ${formatMoney(projectTotal)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">
+                      Budget Remaining
+                    </p>
+                    <p
+                      className={`mt-1 text-2xl font-bold ${remainingBudget < 0 ? "text-red-600" : "text-[#2E7D6B]"}`}
+                    >
+                      ${formatMoney(remainingBudget)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">
+                      Items Added
+                    </p>
+                    <p className="mt-1 text-2xl font-bold text-[#0F172A]">
+                      {itemCount}
+                    </p>
+                  </div>
+                </div>
+              </section>
 
-                    {(productImageUrl ||
-                      productNumber ||
-                      supplierName ||
-                      scrapedDescription) && (
-                      <div className="border border-[#D9D2C3]/80 rounded-3xl p-5 mb-5 bg-white shadow-sm">
-                        <div className="flex gap-5 items-start">
-                          {productImageUrl && (
-                            <img
-                              src={productImageUrl}
-                              alt={itemName || "Scraped product"}
-                              className="w-28 h-28 rounded-2xl object-cover border"
-                            />
-                          )}
+              <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+                <div className="space-y-8">
+                  <section
+                    id="cost-item-form"
+                    className={
+                      editingItemId
+                        ? "fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4"
+                        : `bg-white border border-[#D9D2C3]/80 rounded-2xl p-6 transition-all duration-500 ${
+                            itemFormPulse
+                              ? "ring-4 ring-blue-300 shadow-2xl scale-[1.01]"
+                              : ""
+                          }`
+                    }
+                  >
+                    <div
+                      className={
+                        editingItemId
+                          ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-2xl"
+                          : ""
+                      }
+                    >
+                      <p className="text-sm font-semibold uppercase tracking-wide text-[#2E7D6B]">
+                        Selection item
+                      </p>
+                      <h2 className="mt-1 text-2xl font-bold mb-2">
+                        {editingItemId
+                          ? "Edit Selection or Cost Item"
+                          : "Add Selection or Cost Item"}
+                      </h2>
+                      <p className="mb-5 text-sm text-slate-500">
+                        Add a product, allowance or supplier item. Start with
+                        the supplier link if you have one, then confirm the item
+                        details, category and costing method.
+                      </p>
 
-                          <div className="flex-1">
-                            <p className="text-sm text-gray-500 mb-1">
-                              Product Preview
-                            </p>
+                      {editingItemId && (
+                        <p className="text-sm text-blue-600 font-medium mb-5">
+                          You are editing an existing cost item. Save changes
+                          when done.
+                        </p>
+                      )}
 
-                            <h3 className="text-xl font-bold">
-                              {itemName || "Product details imported"}
-                            </h3>
-
-                            <p className="text-xs text-gray-400 mt-1">
-                              Review and adjust any details before saving.
-                            </p>
-
-                            {productNumber && (
-                              <p className="text-sm text-gray-500 mt-1">
-                                Product #: {productNumber}
-                              </p>
-                            )}
-
-                            {supplierName && (
-                              <p className="text-sm text-gray-500">
-                                Supplier: {supplierName}
-                              </p>
-                            )}
-
-                            {scrapedDescription && (
-                              <p className="text-sm text-gray-600 mt-3 line-clamp-3">
-                                {scrapedDescription}
-                              </p>
-                            )}
-
-                            <p className="text-2xl font-bold mt-4">
-                              ${formatMoney(Number(estimatedCost || 0))}
-                            </p>
-
-                            {priceUnit !== "item" && (
-                              <div className="mt-3 text-sm text-gray-500">
-                                <p>Price unit: {priceUnit}</p>
-
-                                {pricePerSqm && (
-                                  <p>Price per sqm: ${pricePerSqm}</p>
-                                )}
-
-                                {pricePerBox && (
-                                  <p>Price per box: ${pricePerBox}</p>
-                                )}
-
-                                {boxCoverageSqm && (
-                                  <p>Box coverage: {boxCoverageSqm} sqm</p>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                      <div className="mb-5 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                        <p className="text-sm font-bold text-[#0F172A]">
+                          1. Supplier details optional
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Paste a product URL first if you have one. We can
+                          import details, then you can review and adjust before
+                          saving.
+                        </p>
                       </div>
-                    )}
 
-                    <select
-                      className="border rounded-xl p-4 block w-full mb-4"
-                      value={selectedCategory}
-                      onChange={(e) => {
-                        setSelectedCategory(e.target.value);
-                        setSelectedFeatureId("");
-                      }}
-                    >
-                      <option value="">Select category</option>
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))}
-                    </select>
-
-                    <select
-                      className="border rounded-xl p-4 block w-full mb-4"
-                      value={selectedFeatureName}
-                      onChange={(e) => {
-                        setSelectedFeatureName(e.target.value);
-                        setSelectedFeatureId("");
-                        if (e.target.value !== "Other") {
-                          setCustomBudgetFeatureName("");
-                        }
-                      }}
-                    >
-                      <option value="">Optional: select feature</option>
-                      {featureTypes.map((feature) => (
-                        <option key={feature} value={feature}>
-                          {feature}
-                        </option>
-                      ))}
-                    </select>
-
-                    {selectedFeatureName === "Other" && (
+                      <label className="mb-1 block text-sm font-semibold text-gray-700">
+                        Supplier product URL optional
+                      </label>
                       <input
                         className="border rounded-xl p-4 block w-full mb-4"
-                        value={customBudgetFeatureName}
-                        onChange={(e) =>
-                          setCustomBudgetFeatureName(e.target.value)
-                        }
-                        placeholder="Add custom feature name"
+                        placeholder="https://supplier.com/product"
+                        value={supplierUrl}
+                        onChange={(e) => setSupplierUrl(e.target.value)}
                       />
-                    )}
 
-                    {isFlooringItem && (
-                      <div className="border border-[#D9D2C3]/80 rounded-2xl p-5 mb-5 bg-emerald-50">
-                        <div className="mb-4">
-                          <p className="font-semibold text-gray-900">
-                            Flooring quantity helper
-                          </p>
-                          <p className="mt-1 text-sm text-gray-600">
-                            Choose whether to enter the flooring quantity
-                            yourself or calculate it from selected rooms.
-                          </p>
-                        </div>
+                      <button
+                        onClick={scrapeProductInfo}
+                        disabled={isScrapingProduct}
+                        className="mb-4 w-full rounded-2xl bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] text-white px-5 py-4 font-semibold shadow-lg hover:scale-[1.01] transition-all disabled:opacity-50"
+                      >
+                        {isScrapingProduct
+                          ? "Importing Product Details..."
+                          : "✨ Import Product Details"}
+                      </button>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <button
-                            type="button"
-                            onClick={() => setQuantityMethod("manual")}
-                            className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
-                              quantityMethod === "manual"
-                                ? "border-[#0F172A] bg-[#0F172A] text-white"
-                                : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
-                            }`}
-                          >
-                            Enter manually
-                            <span className="mt-1 block text-xs font-normal opacity-80">
-                              Use the normal quantity and sqm fields.
-                            </span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setQuantityMethod("rooms");
-                              setUseSqmPricing(true);
-                            }}
-                            className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
-                              quantityMethod === "rooms"
-                                ? "border-[#0F172A] bg-[#0F172A] text-white"
-                                : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
-                            }`}
-                          >
-                            Calculate from rooms
-                            <span className="mt-1 block text-xs font-normal opacity-80">
-                              Use room sqm from the plans.
-                            </span>
-                          </button>
-                        </div>
-
-                        {quantityMethod === "rooms" && (
-                          <div className="mt-4 space-y-4 rounded-2xl border border-emerald-200 bg-white p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">
-                                  Select rooms for this flooring
-                                </p>
-                                <p className="mt-1 text-xs text-gray-500">
-                                  This uses the room sqm already saved from the
-                                  Plans tab.
-                                </p>
-                              </div>
-
-                              <div className="w-full sm:w-36">
-                                <label className="mb-1 block text-xs font-semibold text-gray-600">
-                                  Wastage %
-                                </label>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  className="w-full rounded-xl border p-3 text-sm"
-                                  value={flooringWastagePercent}
-                                  onChange={(e) =>
-                                    setFlooringWastagePercent(e.target.value)
-                                  }
-                                />
-                              </div>
-                            </div>
-
-                            {planRooms.length === 0 ? (
-                              <div className="rounded-2xl border border-dashed p-4 text-sm text-gray-500">
-                                No rooms have been added yet. Add rooms in the
-                                Plans tab first, or keep using manual sqm entry
-                                below.
-                              </div>
-                            ) : (
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                {planRooms
-                                  .slice()
-                                  .sort((a, b) =>
-                                    getTextValue(a.room_name).localeCompare(
-                                      getTextValue(b.room_name),
-                                    ),
-                                  )
-                                  .map((room) => {
-                                    const roomSqm = getDisplaySqm(room);
-                                    const checked =
-                                      selectedFlooringRoomIds.includes(room.id);
-
-                                    return (
-                                      <label
-                                        key={room.id}
-                                        className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition-all ${
-                                          checked
-                                            ? "border-emerald-500 bg-emerald-50"
-                                            : "border-gray-200 bg-white hover:border-gray-300"
-                                        }`}
-                                      >
-                                        <input
-                                          type="checkbox"
-                                          checked={checked}
-                                          onChange={() =>
-                                            toggleFlooringRoom(room.id)
-                                          }
-                                          className="mt-1"
-                                        />
-                                        <span>
-                                          <span className="block font-semibold text-gray-900">
-                                            {room.room_name || "Unnamed room"}
-                                          </span>
-                                          <span className="block text-xs text-gray-500">
-                                            {room.room_type || "Room"}
-                                            {room.floor_level
-                                              ? ` · ${room.floor_level}`
-                                              : ""}
-                                          </span>
-                                          <span className="mt-1 block text-xs font-semibold text-emerald-700">
-                                            {roomSqm > 0
-                                              ? `${roomSqm.toFixed(2)} sqm`
-                                              : "No sqm saved"}
-                                          </span>
-                                        </span>
-                                      </label>
-                                    );
-                                  })}
-                              </div>
+                      {(productImageUrl ||
+                        productNumber ||
+                        supplierName ||
+                        scrapedDescription) && (
+                        <div className="border border-[#D9D2C3]/80 rounded-3xl p-5 mb-5 bg-white shadow-sm">
+                          <div className="flex gap-5 items-start">
+                            {productImageUrl && (
+                              <img
+                                src={productImageUrl}
+                                alt={itemName || "Scraped product"}
+                                className="w-28 h-28 rounded-2xl object-cover border"
+                              />
                             )}
 
-                            <div className="rounded-2xl bg-gray-950 p-5 text-white">
-                              <p className="text-sm opacity-70">
-                                Recommended amount to order
-                              </p>
-                              <p className="mt-1 text-3xl font-bold">
-                                {getFlooringRecommendedSqm().toFixed(1)} sqm
-                              </p>
-                              <p className="mt-2 text-xs opacity-80">
-                                Selected rooms:{" "}
-                                {getFlooringSelectedAreaSqm().toFixed(2)} sqm
-                                {Number(flooringWastagePercent || 0) > 0
-                                  ? ` + ${Number(flooringWastagePercent || 0)}% wastage`
-                                  : ""}
+                            <div className="flex-1">
+                              <p className="text-sm text-gray-500 mb-1">
+                                Product Preview
                               </p>
 
-                              {Number(boxCoverageSqm || 0) > 0 && (
-                                <p className="mt-2 text-xs opacity-80">
-                                  Box coverage: {boxCoverageSqm} sqm/box ·
-                                  Recommended boxes:{" "}
-                                  {getFlooringRecommendedBoxes()}
+                              <h3 className="text-xl font-bold">
+                                {itemName || "Product details imported"}
+                              </h3>
+
+                              <p className="text-xs text-gray-400 mt-1">
+                                Review and adjust any details before saving.
+                              </p>
+
+                              {productNumber && (
+                                <p className="text-sm text-gray-500 mt-1">
+                                  Product #: {productNumber}
                                 </p>
                               )}
+
+                              {supplierName && (
+                                <p className="text-sm text-gray-500">
+                                  Supplier: {supplierName}
+                                </p>
+                              )}
+
+                              {scrapedDescription && (
+                                <p className="text-sm text-gray-600 mt-3 line-clamp-3">
+                                  {scrapedDescription}
+                                </p>
+                              )}
+
+                              <p className="text-2xl font-bold mt-4">
+                                ${formatMoney(Number(estimatedCost || 0))}
+                              </p>
+
+                              {priceUnit !== "item" && (
+                                <div className="mt-3 text-sm text-gray-500">
+                                  <p>Price unit: {priceUnit}</p>
+
+                                  {pricePerSqm && (
+                                    <p>Price per sqm: ${pricePerSqm}</p>
+                                  )}
+
+                                  {pricePerBox && (
+                                    <p>Price per box: ${pricePerBox}</p>
+                                  )}
+
+                                  {boxCoverageSqm && (
+                                    <p>Box coverage: {boxCoverageSqm} sqm</p>
+                                  )}
+                                </div>
+                              )}
                             </div>
-
-                            <button
-                              type="button"
-                              onClick={useFlooringRecommendation}
-                              className="w-full rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-emerald-700"
-                            >
-                              Use Recommended Quantity
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="border border-[#D9D2C3]/80 rounded-2xl p-5 mb-5 bg-[#F2EEE6]">
-                      <label className="flex items-center gap-3 mb-5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={useSqmPricing}
-                          onChange={(e) => setUseSqmPricing(e.target.checked)}
-                        />
-
-                        <span className="font-medium">
-                          Calculate using sqm pricing
-                        </span>
-                      </label>
-
-                      {!useSqmPricing ? (
-                        <input
-                          className="border rounded-xl p-4 block w-full"
-                          placeholder="Estimated cost"
-                          type="number"
-                          value={estimatedCost}
-                          onChange={(e) => setEstimatedCost(e.target.value)}
-                        />
-                      ) : (
-                        <div className="space-y-4">
-                          <input
-                            className="border rounded-xl p-4 block w-full"
-                            placeholder="sqm"
-                            type="number"
-                            value={sqm}
-                            onChange={(e) => setSqm(e.target.value)}
-                          />
-
-                          <input
-                            className="border rounded-xl p-4 block w-full"
-                            placeholder="Cost per sqm"
-                            type="number"
-                            value={costPerSqm}
-                            onChange={(e) => setCostPerSqm(e.target.value)}
-                          />
-
-                          <label className="flex items-center gap-3 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={includeWastage}
-                              onChange={(e) =>
-                                setIncludeWastage(e.target.checked)
-                              }
-                            />
-
-                            <span>Add 10% wastage allowance</span>
-                          </label>
-
-                          <div className="bg-[#0F172A] text-white rounded-2xl p-5">
-                            <p className="text-sm opacity-70">
-                              Calculated Total
-                            </p>
-                            <p className="text-3xl font-bold">
-                              ${formatMoney(calculateSqmTotal())}
-                            </p>
                           </div>
                         </div>
                       )}
-                    </div>
 
-                    <button
-                      onClick={createItem}
-                      className="bg-[#0F172A] text-white rounded-xl px-5 py-3 w-full"
-                    >
-                      {editingItemId ? "Save Changes" : "Add Item"}
-                    </button>
+                      <div className="mb-5 mt-6 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                        <p className="text-sm font-bold text-[#0F172A]">
+                          2. Item details
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Confirm the item name and quantity. If the item
+                          clearly matches an existing category, we will select
+                          it for you.
+                        </p>
+                      </div>
 
-                    {editingItemId && (
-                      <button
-                        onClick={resetItemForm}
-                        className="mt-3 border border-gray-300 bg-white text-gray-700 rounded-xl px-5 py-3 w-full"
+                      <label className="mb-1 block text-sm font-semibold text-gray-700">
+                        Item name
+                      </label>
+                      <input
+                        className="border rounded-xl p-4 block w-full mb-4"
+                        placeholder="Item name"
+                        value={itemName}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setItemName(value);
+                          maybeAutoSelectCategory(value);
+                        }}
+                        onBlur={() => maybeAutoSelectCategory()}
+                      />
+                      <label className="mb-1 block text-sm font-semibold text-gray-700">
+                        Quantity
+                      </label>
+                      <input
+                        className="border rounded-xl p-4 block w-full mb-4"
+                        placeholder="Quantity"
+                        type="number"
+                        min="1"
+                        value={quantity}
+                        onChange={(e) => setQuantity(e.target.value)}
+                      />
+
+                      <div className="mb-5 mt-6 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                        <p className="text-sm font-bold text-[#0F172A]">
+                          3. Budget category
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Choose where this item should sit in your project
+                          budget. Select create new category if the right one is
+                          missing.
+                        </p>
+                      </div>
+
+                      <label className="mb-1 block text-sm font-semibold text-gray-700">
+                        Budget category
+                      </label>
+                      <select
+                        className="border rounded-xl p-4 block w-full mb-4"
+                        value={selectedCategory}
+                        onChange={(e) => {
+                          if (e.target.value === "__create_new__") {
+                            setShowQuickCategoryModal(true);
+                            setSelectedCategory("");
+                            return;
+                          }
+                          setSelectedCategory(e.target.value);
+                          setSelectedFeatureId("");
+                        }}
                       >
-                        Cancel Edit
-                      </button>
-                    )}
-                  </div>
-                </section>
-              </div>
+                        <option value="">Select category</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                        <option value="__create_new__">
+                          + Create new category
+                        </option>
+                      </select>
 
-              <div className="lg:col-span-2 space-y-8">
-                <section>
-                  <h2 className="text-3xl font-bold mb-6">Budget Categories</h2>
+                      <label className="mb-1 block text-sm font-semibold text-gray-700">
+                        Feature optional
+                      </label>
+                      <select
+                        className="border rounded-xl p-4 block w-full mb-4"
+                        value={selectedFeatureName}
+                        onChange={(e) => {
+                          setSelectedFeatureName(e.target.value);
+                          setSelectedFeatureId("");
+                          if (e.target.value !== "Other") {
+                            setCustomBudgetFeatureName("");
+                          }
+                        }}
+                      >
+                        <option value="">Optional: select feature</option>
+                        {featureTypes.map((feature) => (
+                          <option key={feature} value={feature}>
+                            {feature}
+                          </option>
+                        ))}
+                      </select>
 
-                  {visibleCategories.length === 0 ? (
-                    <div className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8 text-gray-500">
-                      No budget items added yet.
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                      {visibleCategories.map((category) => {
-                        const categoryItems = items.filter(
-                          (item) => item.category_id === category.id,
-                        );
+                      {selectedFeatureName === "Other" && (
+                        <input
+                          className="border rounded-xl p-4 block w-full mb-4"
+                          value={customBudgetFeatureName}
+                          onChange={(e) =>
+                            setCustomBudgetFeatureName(e.target.value)
+                          }
+                          placeholder="Add custom feature name"
+                        />
+                      )}
 
-                        const categoryTotal = categoryItems.reduce(
-                          (sum, item) => sum + calculateItemTotal(item),
-                          0,
-                        );
+                      {isFlooringItem && (
+                        <div className="border border-[#D9D2C3]/80 rounded-2xl p-5 mb-5 bg-emerald-50">
+                          <div className="mb-4">
+                            <p className="font-semibold text-gray-900">
+                              Flooring quantity helper
+                            </p>
+                            <p className="mt-1 text-sm text-gray-600">
+                              Choose whether to enter the flooring quantity
+                              yourself or calculate it from selected rooms.
+                            </p>
+                          </div>
 
-                        const categoryBudget = Number(
-                          category.budget_amount || 0,
-                        );
-                        const categoryRemaining =
-                          categoryBudget - categoryTotal;
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              onClick={() => setQuantityMethod("manual")}
+                              className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
+                                quantityMethod === "manual"
+                                  ? "border-[#0F172A] bg-[#0F172A] text-white"
+                                  : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
+                              }`}
+                            >
+                              Enter manually
+                              <span className="mt-1 block text-xs font-normal opacity-80">
+                                Use the normal quantity and sqm fields.
+                              </span>
+                            </button>
 
-                        return (
-                          <div
-                            key={category.id}
-                            className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-6"
-                          >
-                            <div className="flex justify-between items-center mb-5 gap-4 flex-wrap">
-                              <div>
-                                <h3 className="text-2xl font-bold">
-                                  {category.name}
-                                </h3>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setQuantityMethod("rooms");
+                                setUseSqmPricing(true);
+                              }}
+                              className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
+                                quantityMethod === "rooms"
+                                  ? "border-[#0F172A] bg-[#0F172A] text-white"
+                                  : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
+                              }`}
+                            >
+                              Calculate from rooms
+                              <span className="mt-1 block text-xs font-normal opacity-80">
+                                Use room sqm from the plans.
+                              </span>
+                            </button>
+                          </div>
 
-                                {editingCategoryId === category.id ? (
-                                  <div className="flex gap-2 mt-3 flex-wrap">
-                                    <input
-                                      className="border rounded-xl px-3 py-2 w-40"
-                                      type="number"
-                                      value={editCategoryBudget}
-                                      onChange={(e) =>
-                                        setEditCategoryBudget(e.target.value)
-                                      }
-                                    />
+                          {quantityMethod === "rooms" && (
+                            <div className="mt-4 space-y-4 rounded-2xl border border-emerald-200 bg-white p-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                                <div>
+                                  <p className="text-sm font-semibold text-gray-900">
+                                    Select rooms for this flooring
+                                  </p>
+                                  <p className="mt-1 text-xs text-gray-500">
+                                    This uses the room sqm already saved from
+                                    the Plans tab.
+                                  </p>
+                                </div>
 
-                                    <button
-                                      onClick={() =>
-                                        saveCategoryBudget(category.id)
-                                      }
-                                      className="bg-[#0F172A] text-white rounded-xl px-4 py-2 text-sm"
-                                    >
-                                      Save
-                                    </button>
-
-                                    <button
-                                      onClick={() => {
-                                        setEditingCategoryId(null);
-                                        setEditCategoryBudget("");
-                                      }}
-                                      className="border rounded-xl px-4 py-2 text-sm"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() =>
-                                      startEditCategoryBudget(category)
+                                <div className="w-full sm:w-36">
+                                  <label className="mb-1 block text-xs font-semibold text-gray-600">
+                                    Wastage %
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    className="w-full rounded-xl border p-3 text-sm"
+                                    value={flooringWastagePercent}
+                                    onChange={(e) =>
+                                      setFlooringWastagePercent(e.target.value)
                                     }
-                                    className="mt-2 text-sm text-gray-500 underline"
-                                  >
-                                    Edit category budget
-                                  </button>
+                                  />
+                                </div>
+                              </div>
+
+                              {planRooms.length === 0 ? (
+                                <div className="rounded-2xl border border-dashed p-4 text-sm text-gray-500">
+                                  No rooms have been added yet. Add rooms in the
+                                  Plans tab first, or keep using manual sqm
+                                  entry below.
+                                </div>
+                              ) : (
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  {planRooms
+                                    .slice()
+                                    .sort((a, b) =>
+                                      getTextValue(a.room_name).localeCompare(
+                                        getTextValue(b.room_name),
+                                      ),
+                                    )
+                                    .map((room) => {
+                                      const roomSqm = getDisplaySqm(room);
+                                      const checked =
+                                        selectedFlooringRoomIds.includes(
+                                          room.id,
+                                        );
+
+                                      return (
+                                        <label
+                                          key={room.id}
+                                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition-all ${
+                                            checked
+                                              ? "border-emerald-500 bg-emerald-50"
+                                              : "border-gray-200 bg-white hover:border-gray-300"
+                                          }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            onChange={() =>
+                                              toggleFlooringRoom(room.id)
+                                            }
+                                            className="mt-1"
+                                          />
+                                          <span>
+                                            <span className="block font-semibold text-gray-900">
+                                              {room.room_name || "Unnamed room"}
+                                            </span>
+                                            <span className="block text-xs text-gray-500">
+                                              {room.room_type || "Room"}
+                                              {room.floor_level
+                                                ? ` · ${room.floor_level}`
+                                                : ""}
+                                            </span>
+                                            <span className="mt-1 block text-xs font-semibold text-emerald-700">
+                                              {roomSqm > 0
+                                                ? `${roomSqm.toFixed(2)} sqm`
+                                                : "No sqm saved"}
+                                            </span>
+                                          </span>
+                                        </label>
+                                      );
+                                    })}
+                                </div>
+                              )}
+
+                              <div className="rounded-2xl bg-gray-950 p-5 text-white">
+                                <p className="text-sm opacity-70">
+                                  Recommended amount to order
+                                </p>
+                                <p className="mt-1 text-3xl font-bold">
+                                  {getFlooringRecommendedSqm().toFixed(1)} sqm
+                                </p>
+                                <p className="mt-2 text-xs opacity-80">
+                                  Selected rooms:{" "}
+                                  {getFlooringSelectedAreaSqm().toFixed(2)} sqm
+                                  {Number(flooringWastagePercent || 0) > 0
+                                    ? ` + ${Number(flooringWastagePercent || 0)}% wastage`
+                                    : ""}
+                                </p>
+
+                                {Number(boxCoverageSqm || 0) > 0 && (
+                                  <p className="mt-2 text-xs opacity-80">
+                                    Box coverage: {boxCoverageSqm} sqm/box ·
+                                    Recommended boxes:{" "}
+                                    {getFlooringRecommendedBoxes()}
+                                  </p>
                                 )}
                               </div>
 
-                              <div className="flex gap-4 flex-wrap">
-                                <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-[#F2EEE6]">
-                                  <p className="text-xs uppercase text-gray-500">
-                                    Budget
-                                  </p>
-                                  <p className="text-xl font-bold">
-                                    ${formatMoney(categoryBudget)}
-                                  </p>
-                                </div>
+                              <button
+                                type="button"
+                                onClick={useFlooringRecommendation}
+                                className="w-full rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-emerald-700"
+                              >
+                                Use Recommended Quantity
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
-                                <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-[#0F172A] text-white">
-                                  <p className="text-xs uppercase opacity-70">
-                                    Actual
-                                  </p>
-                                  <p className="text-xl font-bold">
-                                    ${formatMoney(categoryTotal)}
-                                  </p>
-                                </div>
+                      <div className="mb-5 mt-6 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                        <p className="text-sm font-bold text-[#0F172A]">
+                          4. Costing method
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Use a simple estimated cost, or switch on sqm pricing
+                          for flooring, tiles and other area-based selections.
+                        </p>
+                      </div>
 
-                                <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-white">
-                                  <p className="text-xs uppercase text-gray-500">
-                                    Remaining
-                                  </p>
-                                  <p
-                                    className={`text-xl font-bold ${
-                                      categoryRemaining < 0
-                                        ? "text-red-600"
-                                        : "text-green-600"
-                                    }`}
-                                  >
-                                    ${formatMoney(categoryRemaining)}
-                                  </p>
-                                </div>
-                              </div>
+                      <div className="border border-[#D9D2C3]/80 rounded-2xl p-5 mb-5 bg-white">
+                        <label className="flex items-center gap-3 mb-5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={useSqmPricing}
+                            onChange={(e) => setUseSqmPricing(e.target.checked)}
+                          />
+
+                          <span className="font-medium">
+                            Calculate using sqm pricing
+                          </span>
+                        </label>
+
+                        {!useSqmPricing ? (
+                          <div>
+                            <label className="mb-1 block text-sm font-semibold text-gray-700">
+                              Estimated cost ($)
+                            </label>
+                            <input
+                              className="border rounded-xl p-4 block w-full"
+                              placeholder="Estimated cost"
+                              type="number"
+                              value={estimatedCost}
+                              onChange={(e) => setEstimatedCost(e.target.value)}
+                            />
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div>
+                              <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                Area (sqm)
+                              </label>
+                              <input
+                                className="border rounded-xl p-4 block w-full"
+                                placeholder="sqm"
+                                type="number"
+                                value={sqm}
+                                onChange={(e) => setSqm(e.target.value)}
+                              />
                             </div>
 
-                            <div className="space-y-4">
-                              {categoryItems.map((item) => (
-                                <div
-                                  key={item.id}
-                                  className="group border border-[#D9D2C3]/80 rounded-3xl p-5 flex justify-between items-start bg-white hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300"
-                                >
-                                  <div>
-                                    <h4 className="text-xl font-semibold mb-2">
-                                      {item.item_name}
-                                    </h4>
-                                    <p className="text-sm text-gray-500 mb-2">
-                                      Quantity: {Number(item.quantity || 1)}
-                                    </p>
+                            <div>
+                              <label className="mb-1 block text-sm font-semibold text-gray-700">
+                                Cost per sqm ($)
+                              </label>
+                              <input
+                                className="border rounded-xl p-4 block w-full"
+                                placeholder="Cost per sqm"
+                                type="number"
+                                value={costPerSqm}
+                                onChange={(e) => setCostPerSqm(e.target.value)}
+                              />
+                            </div>
 
-                                    {item.feature_id && (
-                                      <p className="text-xs text-purple-700 font-medium mb-2">
-                                        Feature:{" "}
-                                        {planFeatures.find(
-                                          (feature) =>
-                                            feature.id === item.feature_id,
-                                        )?.feature_name ||
-                                          planFeatures.find(
-                                            (feature) =>
-                                              feature.id === item.feature_id,
-                                          )?.feature_type ||
-                                          "Linked feature"}
-                                      </p>
-                                    )}
+                            <label className="flex items-center gap-3 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={includeWastage}
+                                onChange={(e) =>
+                                  setIncludeWastage(e.target.checked)
+                                }
+                              />
 
-                                    <div className="mb-3">
-                                      <select
-                                        value={item.product_status || "Planned"}
-                                        onChange={async (e) => {
-                                          const { error } = await supabase
-                                            .from("project_items")
-                                            .update({
-                                              product_status: e.target.value,
-                                            })
-                                            .eq("id", item.id);
+                              <span>Add 10% wastage allowance</span>
+                            </label>
 
-                                          if (error) {
-                                            showNotice(error.message);
-                                            return;
-                                          }
-
-                                          loadItems();
-                                        }}
-                                        className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold"
-                                      >
-                                        {productStatuses.map((status) => (
-                                          <option key={status} value={status}>
-                                            {status}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </div>
-
-                                    {item.use_sqm_pricing && (
-                                      <div className="text-sm text-gray-500 mb-3">
-                                        {item.sqm} sqm × $
-                                        {Number(
-                                          item.cost_per_sqm || 0,
-                                        ).toLocaleString()}
-                                        /sqm
-                                        {item.include_wastage && (
-                                          <span className="ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-xs">
-                                            +10% wastage
-                                          </span>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {item.supplier_url && (
-                                      <a
-                                        href={item.supplier_url}
-                                        target="_blank"
-                                        className="text-blue-600 underline inline-block"
-                                      >
-                                        View Supplier
-                                      </a>
-                                    )}
-                                  </div>
-
-                                  <div className="text-right">
-                                    <p className="text-2xl font-bold mb-4">
-                                      ${formatMoney(calculateItemTotal(item))}
-                                    </p>
-
-                                    <div className="flex gap-3 justify-end opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                                      <button
-                                        onClick={() => startEditItem(item)}
-                                        className="bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"
-                                      >
-                                        ✨ Edit
-                                      </button>
-
-                                      <button
-                                        onClick={() => deleteItem(item.id)}
-                                        className="bg-gradient-to-r from-red-500 to-pink-600 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"
-                                      >
-                                        🗑 Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
+                            <div className="bg-[#0F172A] text-white rounded-2xl p-5">
+                              <p className="text-sm opacity-70">
+                                Calculated Total
+                              </p>
+                              <p className="text-3xl font-bold">
+                                ${formatMoney(calculateSqmTotal())}
+                              </p>
                             </div>
                           </div>
-                        );
-                      })}
+                        )}
+                      </div>
+
+                      <button
+                        onClick={createItem}
+                        className="bg-[#4F46E5] text-white rounded-xl px-5 py-3 w-full hover:bg-[#4338CA]"
+                      >
+                        {editingItemId ? "Save Selection" : "Add Selection"}
+                      </button>
+
+                      {editingItemId && (
+                        <button
+                          onClick={resetItemForm}
+                          className="mt-3 border border-gray-300 bg-white text-gray-700 rounded-xl px-5 py-3 w-full"
+                        >
+                          Cancel Edit
+                        </button>
+                      )}
                     </div>
-                  )}
-                </section>
+                  </section>
+                </div>
+
+                <div className="lg:col-span-2 space-y-8">
+                  <section>
+                    <h2 className="text-3xl font-bold mb-6">
+                      Budget & Selections Categories
+                    </h2>
+
+                    {visibleCategories.length === 0 ? (
+                      <div className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8 text-gray-500">
+                        No categories yet. Create your first category or add a
+                        selection item to get started.
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {visibleCategories.map((category) => {
+                          const categoryItems = items.filter(
+                            (item) => item.category_id === category.id,
+                          );
+
+                          const categoryTotal = categoryItems.reduce(
+                            (sum, item) => sum + calculateItemTotal(item),
+                            0,
+                          );
+
+                          const categoryBudget = Number(
+                            category.budget_amount || 0,
+                          );
+                          const categoryRemaining =
+                            categoryBudget - categoryTotal;
+
+                          return (
+                            <div
+                              key={category.id}
+                              className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-6"
+                            >
+                              <div className="flex justify-between items-center mb-5 gap-4 flex-wrap">
+                                <div>
+                                  <h3 className="text-2xl font-bold">
+                                    {category.name}
+                                  </h3>
+                                </div>
+
+                                <div className="flex gap-4 flex-wrap">
+                                  <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-[#F2EEE6]">
+                                    <label
+                                      className="text-xs uppercase text-gray-500"
+                                      htmlFor={`category-budget-${category.id}`}
+                                    >
+                                      Budget
+                                    </label>
+                                    <div className="mt-1 flex items-center gap-2">
+                                      <span className="text-xl font-bold text-[#0F172A]">
+                                        $
+                                      </span>
+                                      <input
+                                        id={`category-budget-${category.id}`}
+                                        className="w-32 rounded-xl border border-[#D9D2C3] bg-white px-3 py-2 text-xl font-bold text-[#0F172A] shadow-sm focus:border-[#4F46E5] focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/20"
+                                        type="number"
+                                        min="0"
+                                        value={
+                                          editingCategoryId === category.id
+                                            ? editCategoryBudget
+                                            : String(categoryBudget || "")
+                                        }
+                                        onFocus={() =>
+                                          startEditCategoryBudget(category)
+                                        }
+                                        onChange={(e) => {
+                                          if (
+                                            editingCategoryId !== category.id
+                                          ) {
+                                            setEditingCategoryId(category.id);
+                                          }
+                                          setEditCategoryBudget(e.target.value);
+                                        }}
+                                        onBlur={() => {
+                                          if (
+                                            editingCategoryId === category.id
+                                          ) {
+                                            saveCategoryBudget(category.id);
+                                          }
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter") {
+                                            e.currentTarget.blur();
+                                          }
+
+                                          if (e.key === "Escape") {
+                                            setEditingCategoryId(null);
+                                            setEditCategoryBudget("");
+                                            e.currentTarget.blur();
+                                          }
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-[#0F172A] text-white">
+                                    <p className="text-xs uppercase opacity-70">
+                                      Actual
+                                    </p>
+                                    <p className="text-xl font-bold">
+                                      ${formatMoney(categoryTotal)}
+                                    </p>
+                                  </div>
+
+                                  <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-white">
+                                    <p className="text-xs uppercase text-gray-500">
+                                      Remaining
+                                    </p>
+                                    <p
+                                      className={`text-xl font-bold ${
+                                        categoryRemaining < 0
+                                          ? "text-red-600"
+                                          : "text-green-600"
+                                      }`}
+                                    >
+                                      ${formatMoney(categoryRemaining)}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="space-y-4">
+                                {categoryItems.map((item) => (
+                                  <div
+                                    key={item.id}
+                                    className="group border border-[#D9D2C3]/80 rounded-3xl p-5 flex justify-between items-start bg-white hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300"
+                                  >
+                                    <div>
+                                      <h4 className="text-xl font-semibold mb-2">
+                                        {item.item_name}
+                                      </h4>
+                                      <p className="text-sm text-gray-500 mb-2">
+                                        Quantity: {Number(item.quantity || 1)}
+                                      </p>
+
+                                      {item.feature_id && (
+                                        <p className="text-xs text-purple-700 font-medium mb-2">
+                                          Feature:{" "}
+                                          {planFeatures.find(
+                                            (feature) =>
+                                              feature.id === item.feature_id,
+                                          )?.feature_name ||
+                                            planFeatures.find(
+                                              (feature) =>
+                                                feature.id === item.feature_id,
+                                            )?.feature_type ||
+                                            "Linked feature"}
+                                        </p>
+                                      )}
+
+                                      <div className="mb-3">
+                                        <select
+                                          value={
+                                            item.product_status || "Planned"
+                                          }
+                                          onChange={async (e) => {
+                                            const { error } = await supabase
+                                              .from("project_items")
+                                              .update({
+                                                product_status: e.target.value,
+                                              })
+                                              .eq("id", item.id);
+
+                                            if (error) {
+                                              showNotice(error.message);
+                                              return;
+                                            }
+
+                                            loadItems();
+                                          }}
+                                          className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold"
+                                        >
+                                          {productStatuses.map((status) => (
+                                            <option key={status} value={status}>
+                                              {status}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+
+                                      {item.use_sqm_pricing && (
+                                        <div className="text-sm text-gray-500 mb-3">
+                                          {item.sqm} sqm × $
+                                          {Number(
+                                            item.cost_per_sqm || 0,
+                                          ).toLocaleString()}
+                                          /sqm
+                                          {item.include_wastage && (
+                                            <span className="ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-xs">
+                                              +10% wastage
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {item.supplier_url && (
+                                        <a
+                                          href={item.supplier_url}
+                                          target="_blank"
+                                          className="text-blue-600 underline inline-block"
+                                        >
+                                          View Supplier
+                                        </a>
+                                      )}
+                                    </div>
+
+                                    <div className="text-right">
+                                      <p className="text-2xl font-bold mb-4">
+                                        ${formatMoney(calculateItemTotal(item))}
+                                      </p>
+
+                                      <div className="flex gap-3 justify-end opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
+                                        <button
+                                          onClick={() => startEditItem(item)}
+                                          className="bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"
+                                        >
+                                          ✨ Edit
+                                        </button>
+
+                                        <button
+                                          onClick={() => deleteItem(item.id)}
+                                          className="bg-gradient-to-r from-red-500 to-pink-600 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                </div>
               </div>
             </div>
           )}
 
           {activeTab === "estimate" && (
             <div className="space-y-8">
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5 mb-6">
-                  <div>
-                    <h2 className="text-3xl font-bold mb-3">
-                      Project Cost Estimate
-                    </h2>
-                    <p className="text-gray-500">
-                      Generate a homeowner-friendly feasibility estimate using
-                      your rooms, features, selected products and project
-                      profile. The estimate separates construction works,
-                      site/project costs and contingency so the total is easier
-                      to understand.
-                    </p>
-                  </div>
+              <section className="print-report overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-sm">
+                <div className="print-card bg-gradient-to-r from-[#0F172A] to-[#1E293B] px-8 py-8 text-white">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="max-w-3xl">
+                      <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+                        Cost Forecast
+                      </p>
+                      <h2 className="mt-2 text-4xl font-bold tracking-tight">
+                        Understand where your project is heading
+                      </h2>
+                      <p className="mt-3 text-base leading-7 text-white/70">
+                        Generate a clear planning forecast using your project
+                        details, rooms, features and saved selections. Use it to
+                        check whether the project is sitting where you expected
+                        before you commit.
+                      </p>
+                    </div>
 
-                  <button
-                    onClick={generateEstimate}
-                    disabled={isGeneratingEstimate}
-                    className="rounded-2xl bg-gradient-to-r from-[#2E7D6B] to-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-lg hover:scale-[1.01] hover:shadow-xl transition-all disabled:opacity-50 disabled:hover:scale-100"
-                  >
-                    {isGeneratingEstimate
-                      ? "Generating Estimate..."
-                      : "⚡ Generate Feasibility Estimate"}
-                  </button>
+                    <div className="no-print flex flex-col gap-3 sm:flex-row lg:flex-col">
+                      <button
+                        onClick={generateEstimate}
+                        disabled={isGeneratingEstimate}
+                        className="rounded-2xl bg-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-xl disabled:opacity-50 disabled:hover:translate-y-0"
+                      >
+                        {isGeneratingEstimate
+                          ? "Preparing Forecast..."
+                          : latestEstimate
+                            ? "Refresh Cost Forecast"
+                            : "Generate Cost Forecast"}
+                      </button>
+
+                      {latestEstimate && (
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                          <button
+                            type="button"
+                            onClick={printCostForecast}
+                            className="rounded-2xl border border-white/20 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F2EEE6]"
+                          >
+                            Print Report
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={exportCostForecastCsv}
+                            className="rounded-2xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-white/15"
+                          >
+                            Export CSV
+                          </button>
+                        </div>
+                      )}
+
+                      <div
+                        className={`rounded-2xl px-5 py-4 text-sm font-semibold ${
+                          estimateStatus === "current"
+                            ? "bg-[#2E7D6B]/20 text-emerald-100"
+                            : estimateStatus === "outdated"
+                              ? "bg-amber-400/20 text-amber-100"
+                              : "bg-white/10 text-white/80"
+                        }`}
+                      >
+                        {estimateStatus === "current"
+                          ? "Forecast current"
+                          : estimateStatus === "outdated"
+                            ? "Forecast needs refresh"
+                            : "Forecast not started"}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {!latestEstimate ? (
-                  <div className="rounded-2xl border border-dashed p-8 text-gray-500">
-                    No estimate has been generated yet. Review your rooms,
-                    features, products and project profile, then press Generate
-                    Feasibility Estimate.
+                  <div className="p-8">
+                    <div className="rounded-3xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-10 text-center">
+                      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-3xl shadow-sm">
+                        📊
+                      </div>
+                      <h3 className="text-2xl font-bold text-[#0F172A]">
+                        Your first cost forecast is ready to create
+                      </h3>
+                      <p className="mx-auto mt-3 max-w-2xl text-slate-600">
+                        Review your project summary, rooms, features and
+                        selections, then generate a planning forecast. You can
+                        refresh it whenever your project details change.
+                      </p>
+                      <button
+                        onClick={generateEstimate}
+                        disabled={isGeneratingEstimate}
+                        className="mt-6 rounded-2xl bg-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg disabled:opacity-50 disabled:hover:translate-y-0"
+                      >
+                        {isGeneratingEstimate
+                          ? "Preparing Forecast..."
+                          : "Generate Cost Forecast"}
+                      </button>
+                    </div>
                   </div>
                 ) : (
-                  <>
-                    <div className="grid lg:grid-cols-2 gap-4 mb-8">
-                      <div className="rounded-3xl border-2 border-[#0F172A] bg-[#0F172A] text-white p-6 shadow-lg">
-                        <p className="text-sm opacity-70">
-                          Likely Total Project Cost
-                        </p>
-                        <p className="text-4xl font-bold mt-2">
-                          ${formatMoney(likelyEstimateTotal)}
-                        </p>
-                        <p className="text-sm opacity-80 mt-3">
-                          The current likely total based on your rooms,
-                          features, product selections, site/project costs and
-                          contingency.
-                        </p>
+                  <div className="space-y-8 p-8">
+                    <div className="print-card hidden border-b border-[#D9D2C3] pb-6 print:block">
+                      <p className="text-sm font-semibold text-[#4F46E5]">
+                        Budget My Build
+                      </p>
+                      <h1 className="mt-2 text-3xl font-bold text-[#0F172A]">
+                        Cost Forecast Report
+                      </h1>
+                      <p className="mt-2 text-sm text-slate-600">
+                        {project?.name || "Project"} · Generated {latestEstimate?.created_at ? new Date(latestEstimate.created_at).toLocaleDateString() : new Date().toLocaleDateString()}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Build smarter from the start.
+                      </p>
+                    </div>
+
+                    <div className="print-card grid gap-5 lg:grid-cols-3">
+                      <div className="rounded-3xl border-2 border-[#0F172A] bg-[#0F172A] p-7 text-white shadow-lg lg:col-span-2">
+                        <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-white/60">
+                              Likely Project Cost
+                            </p>
+                            <p className="mt-2 text-5xl font-bold tracking-tight">
+                              ${formatMoney(likelyEstimateTotal)}
+                            </p>
+                            <p className="mt-4 max-w-2xl text-sm leading-6 text-white/75">
+                              Based on your current rooms, features and saved
+                              selections, this is the practical midpoint for
+                              planning conversations.
+                            </p>
+                          </div>
+
+                          <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm text-white/80">
+                            Last generated
+                            <span className="mt-1 block font-semibold text-white">
+                              {latestEstimate.created_at
+                                ? new Date(
+                                    latestEstimate.created_at,
+                                  ).toLocaleDateString()
+                                : "Unknown"}
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="rounded-3xl border bg-emerald-50 border-emerald-200 p-6">
-                        <p className="text-sm text-emerald-700 font-semibold">
-                          Expected Range
+                      <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-7 shadow-sm">
+                        <p className="text-sm font-semibold text-emerald-700">
+                          Expected Planning Range
                         </p>
-                        <p className="text-3xl font-bold mt-2 text-emerald-950">
+                        <p className="mt-2 text-3xl font-bold text-emerald-950">
                           ${formatMoney(expectedEstimateLow)} - $
                           {formatMoney(expectedEstimateHigh)}
                         </p>
-                        <p className="text-sm text-emerald-800 mt-3">
-                          A practical planning range for early feasibility
-                          decisions. This includes the recommended contingency
-                          allowance.
+                        <p className="mt-3 text-sm leading-6 text-emerald-800">
+                          A sensible range for early feasibility decisions,
+                          including the recommended contingency allowance.
                         </p>
                       </div>
                     </div>
 
-                    <section className="rounded-3xl border bg-white p-6 mb-8 shadow-sm">
-                      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+                    <section className="print-card rounded-3xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-6">
+                      <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr] lg:items-center">
                         <div>
-                          <p className="text-sm font-semibold text-gray-500 mb-2">
-                            Build Summary
+                          <p className="text-sm font-semibold text-[#2E7D6B]">
+                            Forecast Summary
                           </p>
-                          <h3 className="text-3xl font-bold">
+                          <h3 className="mt-2 text-2xl font-bold text-[#0F172A]">
                             {buildSummary.headline}
                           </h3>
-                          {buildSummary.location && (
-                            <p className="text-gray-500 mt-2">
-                              {buildSummary.location}
-                            </p>
-                          )}
+                          <p className="mt-3 text-sm leading-6 text-slate-600">
+                            This forecast is built from {buildSummary.roomCount}{" "}
+                            rooms, {buildSummary.featureCount} features and{" "}
+                            {itemCount} saved budget item
+                            {itemCount === 1 ? "" : "s"}. Refresh the forecast
+                            whenever you update the project details.
+                          </p>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
-                          <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
-                            <p className="text-xs text-gray-500">Bedrooms</p>
-                            <p className="text-2xl font-bold">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Bedrooms
+                            </p>
+                            <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                               {buildSummary.bedroomCount}
                             </p>
                           </div>
-                          <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
-                            <p className="text-xs text-gray-500">Bathrooms</p>
-                            <p className="text-2xl font-bold">
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Bathrooms
+                            </p>
+                            <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                               {buildSummary.bathroomCount}
                             </p>
                           </div>
-                          <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
-                            <p className="text-xs text-gray-500">Rooms</p>
-                            <p className="text-2xl font-bold">
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Rooms
+                            </p>
+                            <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                               {buildSummary.roomCount}
                             </p>
                           </div>
-                          <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
-                            <p className="text-xs text-gray-500">Area</p>
-                            <p className="text-2xl font-bold">
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Area
+                            </p>
+                            <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                               {buildSummary.totalSqm.toFixed(0)}m²
                             </p>
                           </div>
                         </div>
                       </div>
-
-                      {(buildSummary.roomHighlights.length > 0 ||
-                        buildSummary.featureHighlights.length > 0) && (
-                        <div className="mt-5 flex flex-wrap gap-2">
-                          {buildSummary.roomHighlights.map((item) => (
-                            <span
-                              key={item}
-                              className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700"
-                            >
-                              {item}
-                            </span>
-                          ))}
-
-                          {buildSummary.featureHighlights.map((item) => (
-                            <span
-                              key={item}
-                              className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700"
-                            >
-                              {item}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </section>
 
-                    <div className="grid md:grid-cols-3 gap-4 mb-8">
-                      <div className="rounded-2xl border bg-[#F2EEE6] p-5">
-                        <p className="text-sm text-gray-500">Rooms Estimate</p>
-                        <p className="text-2xl font-bold">
-                          ${formatMoney(latestEstimate.rooms_low)} - $
-                          {formatMoney(latestEstimate.rooms_high)}
+                    <section className="print-card grid gap-4 md:grid-cols-4">
+                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <p className="text-sm font-semibold text-slate-500">
+                          Building Works
+                        </p>
+                        <p className="mt-2 text-2xl font-bold text-[#0F172A]">
+                          ${formatMoney(adjustedWorksLow)} - $
+                          {formatMoney(adjustedWorksHigh)}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Rooms, features and construction-related works.
                         </p>
                       </div>
 
-                      <div className="rounded-2xl border bg-[#F2EEE6] p-5">
-                        <p className="text-sm text-gray-500">
-                          Features Estimate
+                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <p className="text-sm font-semibold text-slate-500">
+                          Site & Project Costs
                         </p>
-                        <p className="text-2xl font-bold">
-                          ${formatMoney(latestEstimate.features_low)} - $
-                          {formatMoney(latestEstimate.features_high)}
+                        <p className="mt-2 text-2xl font-bold text-[#0F172A]">
+                          ${formatMoney(projectCostAdditions?.total_low || 0)} -
+                          ${formatMoney(projectCostAdditions?.total_high || 0)}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Builder overhead, preliminaries and statutory
+                          allowances.
                         </p>
                       </div>
 
-                      <div className="rounded-2xl border bg-[#F2EEE6] p-5">
-                        <p className="text-sm text-gray-500">Known Products</p>
-                        <p className="text-2xl font-bold">
+                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <p className="text-sm font-semibold text-slate-500">
+                          Known Selections
+                        </p>
+                        <p className="mt-2 text-2xl font-bold text-[#0F172A]">
                           ${formatMoney(latestEstimate.known_items_total)}
                         </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Products and selections already saved to your budget.
+                        </p>
                       </div>
-                    </div>
+
+                      <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+                        <p className="text-sm font-semibold text-amber-800">
+                          Contingency
+                        </p>
+                        <p className="mt-2 text-2xl font-bold text-amber-950">
+                          ${formatMoney(latestEstimate.contingency_low)} - $
+                          {formatMoney(latestEstimate.contingency_high)}
+                        </p>
+                        <p className="mt-2 text-xs text-amber-800">
+                          Recommended allowance for unknowns and changes.
+                        </p>
+                      </div>
+                    </section>
+
+                    <section className="grid gap-6 lg:grid-cols-2">
+                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <h3 className="text-2xl font-bold text-[#0F172A]">
+                          What is driving the cost
+                        </h3>
+                        <p className="mt-2 text-sm text-slate-500">
+                          These are the project factors currently shaping the
+                          forecast.
+                        </p>
+
+                        <div className="mt-5 space-y-3">
+                          {buildSummary.totalSqm > 0 && (
+                            <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700">
+                              <span className="font-semibold text-[#0F172A]">
+                                Overall floor area:
+                              </span>{" "}
+                              {buildSummary.totalSqm.toFixed(0)}m² included in
+                              the room summary.
+                            </div>
+                          )}
+
+                          {buildSummary.bathroomCount > 1 && (
+                            <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700">
+                              <span className="font-semibold text-[#0F172A]">
+                                Multiple wet areas:
+                              </span>{" "}
+                              {buildSummary.bathroomCount} bathroom or ensuite
+                              spaces included.
+                            </div>
+                          )}
+
+                          {buildSummary.featureHighlights.map((item) => (
+                            <div
+                              key={item}
+                              className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700"
+                            >
+                              <span className="font-semibold text-[#0F172A]">
+                                {item.charAt(0).toUpperCase() + item.slice(1)}:
+                              </span>{" "}
+                              included as a cost-impacting project feature.
+                            </div>
+                          ))}
+
+                          {buildSummary.featureHighlights.length === 0 &&
+                            buildSummary.totalSqm === 0 &&
+                            buildSummary.bathroomCount <= 1 && (
+                              <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-4 text-sm text-slate-600">
+                                Add rooms, features and selections to reveal the
+                                main cost drivers.
+                              </div>
+                            )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <h3 className="text-2xl font-bold text-[#0F172A]">
+                          Improve this forecast
+                        </h3>
+                        <p className="mt-2 text-sm text-slate-500">
+                          The more complete your project details are, the more
+                          useful the forecast becomes.
+                        </p>
+
+                        <div className="mt-5 space-y-3">
+                          {missingRoomAssumptions.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("plans")}
+                              className="w-full rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-900 transition hover:bg-amber-100"
+                            >
+                              <span className="font-semibold">
+                                Review room details
+                              </span>
+                              <span className="mt-1 block text-xs">
+                                {missingRoomAssumptions.length} room
+                                {missingRoomAssumptions.length === 1
+                                  ? ""
+                                  : "s"}{" "}
+                                need more detail.
+                              </span>
+                            </button>
+                          )}
+
+                          {missingFeatureAssumptions.length > 0 ||
+                          missingFeatureMeasurements.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("plans")}
+                              className="w-full rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left text-sm text-amber-900 transition hover:bg-amber-100"
+                            >
+                              <span className="font-semibold">
+                                Review features
+                              </span>
+                              <span className="mt-1 block text-xs">
+                                Some features need a clearer type, quantity or
+                                measurement.
+                              </span>
+                            </button>
+                          ) : null}
+
+                          {itemCount === 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab("budget")}
+                              className="w-full rounded-2xl border border-[#D9D2C3] bg-[#F2EEE6] p-4 text-left text-sm text-slate-700 transition hover:bg-white"
+                            >
+                              <span className="font-semibold text-[#0F172A]">
+                                Add known selections
+                              </span>
+                              <span className="mt-1 block text-xs">
+                                Add products or allowances you already know
+                                about.
+                              </span>
+                            </button>
+                          )}
+
+                          {estimateStatus === "outdated" && (
+                            <button
+                              type="button"
+                              onClick={generateEstimate}
+                              disabled={isGeneratingEstimate}
+                              className="w-full rounded-2xl bg-[#4F46E5] p-4 text-left text-sm font-semibold text-white transition hover:bg-[#4338CA] disabled:opacity-50"
+                            >
+                              Refresh the forecast with your latest changes
+                            </button>
+                          )}
+
+                          {missingRoomAssumptions.length === 0 &&
+                            missingFeatureAssumptions.length === 0 &&
+                            missingFeatureMeasurements.length === 0 &&
+                            itemCount > 0 &&
+                            estimateStatus !== "outdated" && (
+                              <div className="rounded-2xl border border-[#2E7D6B]/30 bg-[#2E7D6B]/10 p-4 text-sm text-[#1F5F52]">
+                                Your forecast is in a good place. Keep it
+                                updated as rooms, features or selections change.
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    </section>
 
                     {projectCostAdditions?.rates && (
-                      <section className="rounded-3xl border bg-white p-6 mb-8 shadow-sm">
-                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5 mb-5">
+                      <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div>
-                            <h3 className="text-2xl font-bold mb-2">
-                              Site & Project Costs Included
+                            <h3 className="text-2xl font-bold text-[#0F172A]">
+                              Included Project Costs
                             </h3>
-                            <p className="text-gray-500">
-                              These are the extra project costs that usually sit
-                              around the actual building works, such as
-                              supervision, preliminaries, statutory allowances
-                              and builder overhead.
-                            </p>
-                          </div>
-
-                          <div className="rounded-2xl bg-[#F2EEE6] border px-5 py-3 text-right">
-                            <p className="text-xs uppercase text-gray-500">
-                              Estimated construction works
-                            </p>
-                            <p className="text-lg font-bold">
-                              ${formatMoney(adjustedWorksLow)} - $
-                              {formatMoney(adjustedWorksHigh)}
+                            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+                              These allowances usually sit around the building
+                              works and are included so the forecast feels
+                              closer to the full project picture.
                             </p>
                           </div>
                         </div>
 
-                        <div className="grid md:grid-cols-4 gap-4">
-                          <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                            <p className="text-xs uppercase text-gray-500">
-                              Builder & project overhead
+                        <div className="grid gap-4 md:grid-cols-4">
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Builder & Project Overhead
                             </p>
-                            <p className="text-lg font-bold">
+                            <p className="mt-1 text-lg font-bold text-[#0F172A]">
                               $
                               {formatMoney(
                                 projectCostAdditions.builder_margin_low || 0,
@@ -5005,17 +6534,12 @@ export default function ProjectPage() {
                                 projectCostAdditions.builder_margin_high || 0,
                               )}
                             </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Builder coordination, overhead and profit
-                              allowance
-                            </p>
                           </div>
-
-                          <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                            <p className="text-xs uppercase text-gray-500">
-                              Preliminaries / admin
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Preliminaries
                             </p>
-                            <p className="text-lg font-bold">
+                            <p className="mt-1 text-lg font-bold text-[#0F172A]">
                               $
                               {formatMoney(
                                 projectCostAdditions.preliminaries_admin_low ||
@@ -5027,16 +6551,12 @@ export default function ProjectPage() {
                                   0,
                               )}
                             </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Site setup, supervision, temporary works and admin
-                            </p>
                           </div>
-
-                          <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                            <p className="text-xs uppercase text-gray-500">
-                              Q Leave levy
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Q Leave Levy
                             </p>
-                            <p className="text-lg font-bold">
+                            <p className="mt-1 text-lg font-bold text-[#0F172A]">
                               $
                               {formatMoney(
                                 projectCostAdditions.qleave_low || 0,
@@ -5046,16 +6566,12 @@ export default function ProjectPage() {
                                 projectCostAdditions.qleave_high || 0,
                               )}
                             </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Portable long service levy allowance
-                            </p>
                           </div>
-
-                          <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                            <p className="text-xs uppercase text-gray-500">
-                              Home warranty / statutory
+                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Warranty / Statutory
                             </p>
-                            <p className="text-lg font-bold">
+                            <p className="mt-1 text-lg font-bold text-[#0F172A]">
                               $
                               {formatMoney(
                                 projectCostAdditions.home_warranty_low || 0,
@@ -5065,501 +6581,202 @@ export default function ProjectPage() {
                                 projectCostAdditions.home_warranty_high || 0,
                               )}
                             </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Home warranty, insurances and statutory costs
+                          </div>
+                        </div>
+                      </section>
+                    )}
+
+                    {latestEstimateConfidence && (
+                      <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <h3 className="text-2xl font-bold text-[#0F172A]">
+                              Forecast Readiness
+                            </h3>
+                            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
+                              This reflects how complete the project information
+                              is behind the forecast.
+                            </p>
+                          </div>
+
+                          <div className="rounded-3xl bg-[#0F172A] px-6 py-5 text-right text-white">
+                            <p className="text-sm text-white/60">Readiness</p>
+                            <p className="mt-1 text-4xl font-bold">
+                              {latestEstimateConfidence.score}/100
+                            </p>
+                            <p className="text-sm text-white/75">
+                              {latestEstimateConfidence.label}
                             </p>
                           </div>
                         </div>
 
-                        {projectCostAdditions.rates?.gst_treatment && (
-                          <p className="text-xs text-gray-400 mt-4">
-                            {projectCostAdditions.rates.gst_treatment}
-                          </p>
+                        {latestEstimateConfidence.reasons?.length > 0 && (
+                          <div className="mt-5 grid gap-3 md:grid-cols-2">
+                            {latestEstimateConfidence.reasons.map(
+                              (reason: string, index: number) => (
+                                <div
+                                  key={index}
+                                  className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700"
+                                >
+                                  {reason}
+                                </div>
+                              ),
+                            )}
+                          </div>
                         )}
                       </section>
                     )}
 
-                    <div className="grid md:grid-cols-3 gap-4">
-                      <div className="rounded-2xl border bg-white p-5">
-                        <p className="text-sm text-gray-500">
-                          Estimated Construction Cost
-                        </p>
-                        <p className="text-xl font-bold">
-                          ${formatMoney(adjustedWorksLow)} - $
-                          {formatMoney(adjustedWorksHigh)}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-2">
-                          The estimated cost of the actual building works based
-                          on the rooms, features and selected products.
-                        </p>
+                    <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div>
+                          <h3 className="text-2xl font-bold text-[#0F172A]">
+                            Detailed Breakdown
+                          </h3>
+                          <p className="mt-2 text-sm text-slate-500">
+                            A more detailed view of how rooms and features
+                            contributed to the forecast.
+                          </p>
+                        </div>
                       </div>
 
-                      <div className="rounded-2xl border bg-white p-5">
-                        <p className="text-sm text-gray-500">
-                          Site & Project Costs
-                        </p>
-                        <p className="text-xl font-bold">
-                          ${formatMoney(projectCostAdditions?.total_low || 0)} -
-                          ${formatMoney(projectCostAdditions?.total_high || 0)}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-2">
-                          Builder overhead, preliminaries, statutory allowances
-                          and project setup costs.
-                        </p>
-                      </div>
+                      <div className="grid gap-6 lg:grid-cols-2">
+                        <div className="space-y-4">
+                          <h4 className="text-lg font-bold text-[#0F172A]">
+                            Rooms
+                          </h4>
+                          {!latestEstimateBreakdown.rooms ||
+                          latestEstimateBreakdown.rooms.length === 0 ? (
+                            <p className="rounded-2xl border border-dashed border-[#D9D2C3] p-5 text-sm text-slate-500">
+                              No rooms included in this forecast.
+                            </p>
+                          ) : (
+                            groupedEstimateRooms.map((group) => (
+                              <div
+                                key={group.name}
+                                className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4"
+                              >
+                                <div className="mb-3 flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="font-bold text-[#0F172A]">
+                                      {group.name}
+                                    </p>
+                                    <p className="text-xs text-slate-500">
+                                      {group.rooms.length} room
+                                      {group.rooms.length === 1
+                                        ? ""
+                                        : "s"} · {group.sqm.toFixed(2)} sqm
+                                    </p>
+                                  </div>
+                                  <p className="text-sm font-bold text-[#0F172A]">
+                                    ${formatMoney(group.low)} - $
+                                    {formatMoney(group.high)}
+                                  </p>
+                                </div>
 
-                      <div className="rounded-2xl border bg-amber-50 border-amber-200 p-5">
-                        <p className="font-semibold text-amber-900">
-                          Recommended Contingency
-                        </p>
-                        <p className="text-xl font-bold text-amber-950 mt-1">
-                          ${formatMoney(latestEstimate.contingency_low)} - $
-                          {formatMoney(latestEstimate.contingency_high)}
-                        </p>
-                        <p className="text-xs text-amber-800 mt-2">
-                          Allowance for unknowns, design changes and site
-                          conditions.
-                        </p>
-                      </div>
-                    </div>
+                                <div className="space-y-2">
+                                  {group.rooms.map((room: any) => {
+                                    const roomEstimate = room.estimate || {};
+                                    const displaySqm = getDisplaySqm(room);
+                                    const isMissingAssumption =
+                                      roomEstimate.source ===
+                                        "missing_assumption" ||
+                                      room.source === "missing_assumption";
 
-                    <p className="text-sm text-gray-400 mt-5">
-                      Last generated:{" "}
-                      {latestEstimate.created_at
-                        ? new Date(latestEstimate.created_at).toLocaleString()
-                        : "Unknown"}
-                    </p>
-                  </>
+                                    return (
+                                      <div
+                                        key={room.id}
+                                        className="flex justify-between gap-3 rounded-xl bg-white px-4 py-3 text-sm"
+                                      >
+                                        <div>
+                                          <p className="font-semibold text-[#0F172A]">
+                                            {room.room_name}
+                                          </p>
+                                          <p className="text-xs text-slate-500">
+                                            {room.room_type || "Room"} ·{" "}
+                                            {displaySqm.toFixed(2)} sqm
+                                          </p>
+                                        </div>
+                                        <div className="text-right font-semibold text-[#0F172A]">
+                                          {isMissingAssumption
+                                            ? "Needs detail"
+                                            : `$${formatMoney(roomEstimate.low || room.low || 0)} - $${formatMoney(roomEstimate.high || room.high || 0)}`}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="space-y-4">
+                          <h4 className="text-lg font-bold text-[#0F172A]">
+                            Features
+                          </h4>
+                          {!latestEstimateBreakdown.features ||
+                          latestEstimateBreakdown.features.length === 0 ? (
+                            <p className="rounded-2xl border border-dashed border-[#D9D2C3] p-5 text-sm text-slate-500">
+                              No features included in this forecast.
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {latestEstimateBreakdown.features.map(
+                                (feature: any) => {
+                                  const featureEstimate =
+                                    feature.estimate || {};
+                                  const isMissingAssumption =
+                                    featureEstimate.source ===
+                                      "missing_assumption" ||
+                                    feature.source === "missing_assumption";
+                                  const isMissingMeasurement =
+                                    featureEstimate.source ===
+                                      "missing_measurement" ||
+                                    feature.source === "missing_measurement";
+
+                                  return (
+                                    <div
+                                      key={feature.id}
+                                      className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4"
+                                    >
+                                      <div className="flex justify-between gap-3">
+                                        <div>
+                                          <p className="font-semibold text-[#0F172A]">
+                                            {feature.feature_name ||
+                                              feature.feature_type ||
+                                              "Feature"}
+                                          </p>
+                                          <p className="text-xs text-slate-500">
+                                            Qty {feature.quantity || 1}
+                                            {feature.estimated_area_sqm > 0
+                                              ? ` · ${Number(feature.estimated_area_sqm).toFixed(2)} sqm`
+                                              : ""}
+                                            {feature.estimated_length_m > 0
+                                              ? ` · ${Number(feature.estimated_length_m).toFixed(2)} lm`
+                                              : ""}
+                                          </p>
+                                        </div>
+                                        <div className="text-right text-sm font-bold text-[#0F172A]">
+                                          {isMissingAssumption
+                                            ? "Needs type"
+                                            : isMissingMeasurement
+                                              ? "Needs measurement"
+                                              : `$${formatMoney(featureEstimate.low || feature.low || 0)} - $${formatMoney(featureEstimate.high || feature.high || 0)}`}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                },
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </section>
+                  </div>
                 )}
               </section>
-
-              {latestEstimate && latestEstimateConfidence && (
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5 mb-5">
-                    <div>
-                      <h3 className="text-2xl font-bold mb-2">
-                        Estimate Confidence
-                      </h3>
-                      <p className="text-gray-500">
-                        This score reflects how much of the estimate is based on
-                        measured areas, matched assumptions and known product
-                        selections.
-                      </p>
-                    </div>
-
-                    <div className="rounded-2xl bg-[#0F172A] px-6 py-4 text-white text-right min-w-40">
-                      <p className="text-sm opacity-70">Confidence</p>
-                      <p className="text-3xl font-bold">
-                        {latestEstimateConfidence.score}/100
-                      </p>
-                      <p className="text-sm opacity-80">
-                        {latestEstimateConfidence.label}
-                      </p>
-                    </div>
-                  </div>
-
-                  {latestEstimateConfidence.reasons?.length > 0 && (
-                    <div className="grid md:grid-cols-2 gap-3">
-                      {latestEstimateConfidence.reasons.map(
-                        (reason: string, index: number) => (
-                          <div
-                            key={index}
-                            className="rounded-2xl border bg-[#F2EEE6] p-4 text-sm text-gray-700"
-                          >
-                            {reason}
-                          </div>
-                        ),
-                      )}
-                    </div>
-                  )}
-                </section>
-              )}
-
-              {latestEstimate && latestEstimateCommentary.length > 0 && (
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                  <h3 className="text-2xl font-bold mb-5">
-                    Estimate Commentary
-                  </h3>
-                  <div className="space-y-3">
-                    {latestEstimateCommentary.map(
-                      (comment: string, index: number) => (
-                        <div
-                          key={index}
-                          className="rounded-2xl border bg-blue-50 border-blue-100 p-4 text-sm text-blue-900"
-                        >
-                          {comment}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </section>
-              )}
-
-              {latestEstimate &&
-                (missingRoomAssumptions.length > 0 ||
-                  missingFeatureAssumptions.length > 0 ||
-                  missingFeatureMeasurements.length > 0) && (
-                  <section className="bg-white border border-amber-200 rounded-2xl p-8">
-                    <h3 className="text-2xl font-bold mb-3 text-amber-900">
-                      Costing Warnings
-                    </h3>
-                    <p className="text-sm text-amber-800 mb-5">
-                      These items were detected but could not be fully costed.
-                      Fixing these will improve the estimate confidence.
-                    </p>
-
-                    <div className="space-y-4">
-                      {missingRoomAssumptions.length > 0 && (
-                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
-                          <p className="font-semibold text-amber-900 mb-2">
-                            Rooms missing assumptions
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {missingRoomAssumptions.map((room: any) => (
-                              <span
-                                key={room.id}
-                                className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-100"
-                              >
-                                {room.room_name || room.room_type || "Room"}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {missingFeatureAssumptions.length > 0 && (
-                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
-                          <p className="font-semibold text-amber-900 mb-2">
-                            Features missing assumptions
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {missingFeatureAssumptions.map((feature: any) => (
-                              <span
-                                key={feature.id}
-                                className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-100"
-                              >
-                                {feature.feature_name ||
-                                  feature.feature_type ||
-                                  "Feature"}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {missingFeatureMeasurements.length > 0 && (
-                        <div className="rounded-2xl bg-amber-50 border border-amber-100 p-5">
-                          <p className="font-semibold text-amber-900 mb-2">
-                            Features missing measurements
-                          </p>
-                          <div className="space-y-2">
-                            {missingFeatureMeasurements.map((feature: any) => (
-                              <div
-                                key={feature.id}
-                                className="rounded-xl bg-white px-4 py-3 text-sm text-amber-900 border border-amber-100"
-                              >
-                                <span className="font-semibold">
-                                  {feature.feature_name ||
-                                    feature.feature_type ||
-                                    "Feature"}
-                                </span>
-                                {feature.estimate?.missing_reason && (
-                                  <span className="text-amber-700">
-                                    {" "}
-                                    — {feature.estimate.missing_reason}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                )}
-
-              {latestEstimate && (
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                  <h3 className="text-2xl font-bold mb-5">Cost Profile Used</h3>
-                  <div className="grid md:grid-cols-4 gap-4">
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">Quality</p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "quality_level",
-                          latestEstimateInputs.quality_level,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">Site</p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "site_complexity",
-                          latestEstimateInputs.site_complexity,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">Access</p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "access_difficulty",
-                          latestEstimateInputs.access_difficulty,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">Slope</p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "slope_level",
-                          latestEstimateInputs.slope_level,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">Glazing</p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "glazing_level",
-                          latestEstimateInputs.glazing_level,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">
-                        Ceilings
-                      </p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "ceiling_height_level",
-                          latestEstimateInputs.ceiling_height_level,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">
-                        Wet Areas
-                      </p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "wet_area_level",
-                          latestEstimateInputs.wet_area_level,
-                        )}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border bg-[#F2EEE6] p-4">
-                      <p className="text-xs uppercase text-gray-500">
-                        Contingency
-                      </p>
-                      <p className="font-bold">
-                        {getProfileLabel(
-                          "contingency_level",
-                          latestEstimateInputs.contingency_level,
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                </section>
-              )}
-
-              {latestEstimate && (
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                  <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
-                    <div>
-                      <h3 className="text-2xl font-bold mb-2">
-                        Room Cost Breakdown
-                      </h3>
-                      <p className="text-gray-500">
-                        Grouped by room type so the estimate is easier to
-                        review.
-                      </p>
-                    </div>
-                  </div>
-
-                  {!latestEstimateBreakdown.rooms ||
-                  latestEstimateBreakdown.rooms.length === 0 ? (
-                    <p className="text-gray-500">
-                      No rooms included in this estimate.
-                    </p>
-                  ) : (
-                    <div className="space-y-6">
-                      {groupedEstimateRooms.map((group) => (
-                        <div
-                          key={group.name}
-                          className="rounded-3xl border bg-[#F2EEE6] p-5"
-                        >
-                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-                            <div>
-                              <h4 className="text-xl font-bold">
-                                {group.name}
-                              </h4>
-                              <p className="text-sm text-gray-500">
-                                {group.rooms.length} room
-                                {group.rooms.length === 1 ? "" : "s"} ·{" "}
-                                {group.sqm.toFixed(2)} sqm
-                              </p>
-                            </div>
-
-                            <div className="rounded-2xl bg-white border px-5 py-3 text-right">
-                              <p className="text-xs uppercase text-gray-500">
-                                Group Total
-                              </p>
-                              <p className="text-lg font-bold">
-                                ${formatMoney(group.low)} - $
-                                {formatMoney(group.high)}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            {group.rooms.map((room: any) => {
-                              const roomEstimate = room.estimate || {};
-                              const displaySqm = getDisplaySqm(room);
-                              const isMissingAssumption =
-                                roomEstimate.source === "missing_assumption" ||
-                                room.source === "missing_assumption";
-
-                              return (
-                                <div
-                                  key={room.id}
-                                  className="flex justify-between gap-4 rounded-2xl border bg-white p-4"
-                                >
-                                  <div>
-                                    <p className="font-semibold">
-                                      {room.room_name}
-                                    </p>
-                                    <p className="text-sm text-gray-500">
-                                      {room.room_type || "Other"} ·{" "}
-                                      {displaySqm.toFixed(2)} sqm
-                                    </p>
-
-                                    {roomEstimate.used_fallback_sqm && (
-                                      <p className="text-xs text-amber-600 mt-1">
-                                        Using assumed room size
-                                      </p>
-                                    )}
-
-                                    {roomEstimate.assumption?.label && (
-                                      <p className="text-xs text-gray-400 mt-1">
-                                        {roomEstimate.assumption.label}
-                                      </p>
-                                    )}
-                                  </div>
-
-                                  <div className="text-right">
-                                    {isMissingAssumption ? (
-                                      <p className="text-sm font-semibold text-red-600">
-                                        Missing assumption
-                                      </p>
-                                    ) : (
-                                      <p className="font-bold">
-                                        $
-                                        {formatMoney(
-                                          roomEstimate.low || room.low || 0,
-                                        )}{" "}
-                                        - $
-                                        {formatMoney(
-                                          roomEstimate.high || room.high || 0,
-                                        )}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              )}
-
-              {latestEstimate && (
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
-                  <h3 className="text-2xl font-bold mb-5">
-                    Feature Cost Breakdown
-                  </h3>
-
-                  {!latestEstimateBreakdown.features ||
-                  latestEstimateBreakdown.features.length === 0 ? (
-                    <p className="text-gray-500">
-                      No features included in this estimate.
-                    </p>
-                  ) : (
-                    <div className="space-y-3">
-                      {latestEstimateBreakdown.features.map((feature: any) => {
-                        const featureEstimate = feature.estimate || {};
-                        const isMissingAssumption =
-                          featureEstimate.source === "missing_assumption" ||
-                          feature.source === "missing_assumption";
-                        const isMissingMeasurement =
-                          featureEstimate.source === "missing_measurement" ||
-                          feature.source === "missing_measurement";
-
-                        return (
-                          <div
-                            key={feature.id}
-                            className="flex justify-between gap-4 rounded-2xl border p-4"
-                          >
-                            <div>
-                              <p className="font-semibold">
-                                {feature.feature_name}
-                              </p>
-                              <p className="text-sm text-gray-500">
-                                Qty {feature.quantity || 1}
-                                {feature.estimated_area_sqm > 0
-                                  ? ` · ${Number(feature.estimated_area_sqm).toFixed(2)} sqm`
-                                  : ""}
-                                {feature.estimated_length_m > 0
-                                  ? ` · ${Number(feature.estimated_length_m).toFixed(2)} lm`
-                                  : ""}
-                              </p>
-
-                              {featureEstimate.assumption?.label && (
-                                <p className="text-xs text-gray-400 mt-1">
-                                  {featureEstimate.assumption.label}
-                                </p>
-                              )}
-
-                              {featureEstimate.missing_reason && (
-                                <p className="text-xs text-amber-600 mt-1">
-                                  {featureEstimate.missing_reason}
-                                </p>
-                              )}
-                            </div>
-
-                            <div className="text-right">
-                              {isMissingAssumption ? (
-                                <p className="text-sm font-semibold text-red-600">
-                                  Missing assumption
-                                </p>
-                              ) : isMissingMeasurement ? (
-                                <p className="text-sm font-semibold text-amber-600">
-                                  Missing measurement
-                                </p>
-                              ) : (
-                                <p className="font-bold">
-                                  $
-                                  {formatMoney(
-                                    featureEstimate.low || feature.low || 0,
-                                  )}{" "}
-                                  - $
-                                  {formatMoney(
-                                    featureEstimate.high || feature.high || 0,
-                                  )}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              )}
             </div>
           )}
 
@@ -6063,7 +7280,7 @@ export default function ProjectPage() {
 
                   <button
                     onClick={saveCostProfile}
-                    className="rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
+                    className="rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
                   >
                     Save Cost Profile
                   </button>
@@ -6394,7 +7611,7 @@ export default function ProjectPage() {
 
                 <button
                   onClick={uploadFile}
-                  className="bg-[#0F172A] text-white rounded-xl px-5 py-3"
+                  className="bg-[#4F46E5] text-white rounded-xl px-5 py-3 hover:bg-[#4338CA]"
                 >
                   Upload Inspiration File
                 </button>
@@ -6438,7 +7655,7 @@ export default function ProjectPage() {
                               onClick={() => openFile(file.file_path)}
                               className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
                             >
-                              👁 Open
+                              Open
                             </button>
 
                             <button
@@ -6447,7 +7664,7 @@ export default function ProjectPage() {
                               }
                               className="rounded-full bg-gradient-to-r from-red-500 to-pink-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
                             >
-                              🗑 Delete
+                              Delete
                             </button>
                           </div>
                         </div>
@@ -6523,6 +7740,70 @@ export default function ProjectPage() {
             </div>
           )}
         </div>
+
+        {showQuickCategoryModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4">
+            <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+              <p className="text-sm font-semibold uppercase tracking-wide text-[#2E7D6B]">
+                Budget category
+              </p>
+              <h2 className="mt-2 text-2xl font-bold text-[#0F172A]">
+                Create New Category
+              </h2>
+              <p className="mt-2 text-sm text-gray-500">
+                Add a category without leaving the cost item you are working on.
+              </p>
+
+              <div className="mt-5 space-y-4">
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-gray-700">
+                    Category name
+                  </label>
+                  <input
+                    className="w-full rounded-xl border border-[#D9D2C3] bg-white p-4"
+                    value={quickCategoryName}
+                    onChange={(e) => setQuickCategoryName(e.target.value)}
+                    placeholder="e.g. Windows & Doors"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-semibold text-gray-700">
+                    Budget optional
+                  </label>
+                  <input
+                    className="w-full rounded-xl border border-[#D9D2C3] bg-white p-4"
+                    type="number"
+                    value={quickCategoryBudget}
+                    onChange={(e) => setQuickCategoryBudget(e.target.value)}
+                    placeholder="e.g. 12000"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowQuickCategoryModal(false);
+                    setQuickCategoryName("");
+                    setQuickCategoryBudget("");
+                  }}
+                  className="rounded-xl border border-[#D9D2C3] bg-white px-5 py-3 font-semibold text-slate-700 hover:bg-[#F2EEE6]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={createQuickCategory}
+                  className="rounded-xl bg-[#4F46E5] px-5 py-3 font-semibold text-white hover:bg-[#4338CA]"
+                >
+                  Create Category
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {noticeModal && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#0F172A]/40 p-4">
