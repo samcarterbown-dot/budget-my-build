@@ -7,9 +7,18 @@ import { supabase } from "../../lib/supabase";
 import AppNavbar from "../../components/AppNavbar";
 
 const inputClass =
-  "w-full rounded-xl border border-[#D9D2C3] bg-white p-4 outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10";
+  "w-full rounded-2xl border border-[#D9D2C3]/80 bg-white px-4 py-3.5 text-[#0F172A] outline-none transition placeholder:text-slate-400 focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10";
 
-const labelClass = "mb-1 block text-sm font-semibold text-[#0F172A]";
+const labelClass = "mb-1.5 block text-sm font-semibold text-[#0F172A]";
+
+const cardClass =
+  "rounded-2xl border border-[#D9D2C3]/50 bg-white shadow-sm";
+
+const primaryButtonClass =
+  "rounded-2xl bg-[#4F46E5] px-5 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md active:translate-y-0";
+
+const secondaryButtonClass =
+  "rounded-2xl border border-[#D9D2C3]/80 bg-white px-5 py-3 font-semibold text-slate-700 transition hover:bg-[#F8F6F1]";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -115,6 +124,96 @@ export default function Dashboard() {
     return Math.round(((index + 1) / projectStages.length) * 100);
   }
 
+
+  function getProjectInitials(name: string) {
+    const words = String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (words.length === 0) return "B";
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+
+    return `${words[0][0] || ""}${words[1][0] || ""}`.toUpperCase();
+  }
+
+  function getStageMeta(stage: string) {
+    switch (stage) {
+      case "Idea":
+        return {
+          label: "Idea",
+          dotClass: "bg-slate-500",
+          textClass: "text-slate-700",
+          bgClass: "bg-slate-50",
+          borderClass: "border-slate-200",
+        };
+      case "Feasibility":
+        return {
+          label: "Feasibility",
+          dotClass: "bg-sky-500",
+          textClass: "text-sky-700",
+          bgClass: "bg-sky-50",
+          borderClass: "border-sky-100",
+        };
+      case "Planning":
+        return {
+          label: "Planning",
+          dotClass: "bg-[#4F46E5]",
+          textClass: "text-[#4F46E5]",
+          bgClass: "bg-[#F8F7FF]",
+          borderClass: "border-[#4F46E5]/10",
+        };
+      case "Design":
+        return {
+          label: "Design",
+          dotClass: "bg-violet-500",
+          textClass: "text-violet-700",
+          bgClass: "bg-violet-50",
+          borderClass: "border-violet-100",
+        };
+      case "Approvals":
+        return {
+          label: "Approvals",
+          dotClass: "bg-amber-500",
+          textClass: "text-amber-700",
+          bgClass: "bg-amber-50",
+          borderClass: "border-amber-100",
+        };
+      case "Quotes":
+        return {
+          label: "Quotes",
+          dotClass: "bg-orange-500",
+          textClass: "text-orange-700",
+          bgClass: "bg-orange-50",
+          borderClass: "border-orange-100",
+        };
+      case "Construction":
+        return {
+          label: "Construction",
+          dotClass: "bg-[#2E7D6B]",
+          textClass: "text-[#2E7D6B]",
+          bgClass: "bg-[#2E7D6B]/10",
+          borderClass: "border-[#2E7D6B]/10",
+        };
+      case "Completed":
+        return {
+          label: "Completed",
+          dotClass: "bg-emerald-500",
+          textClass: "text-emerald-700",
+          bgClass: "bg-emerald-50",
+          borderClass: "border-emerald-100",
+        };
+      default:
+        return {
+          label: "Idea",
+          dotClass: "bg-slate-500",
+          textClass: "text-slate-700",
+          bgClass: "bg-slate-50",
+          borderClass: "border-slate-200",
+        };
+    }
+  }
+
   function resetProjectForm() {
     setProjectName("");
     setDescription("");
@@ -180,6 +279,7 @@ export default function Dashboard() {
     }
 
     setProjects(data || []);
+
     if (!data || data.length === 0) {
       setIsCreatingProject(true);
     }
@@ -241,8 +341,10 @@ export default function Dashboard() {
     resetProjectForm();
     setIsCreatingProject(false);
     await loadProjects();
+
     const startTab =
       planningGoal === "Track products & selections" ? "budget" : "plans";
+
     router.push(`/projects/${newProject.id}?start=${startTab}`);
   }
 
@@ -278,16 +380,19 @@ export default function Dashboard() {
             .from("plan_features")
             .delete()
             .in("plan_page_id", pageIds);
+
           await supabase
             .from("plan_rooms")
             .delete()
             .in("plan_page_id", pageIds);
+
           await supabase.from("plan_pages").delete().in("id", pageIds);
         }
 
         if (storagePaths.length > 0) {
           await supabase.storage.from("project-plans").remove(storagePaths);
         }
+
         if (pageImagePaths.length > 0) {
           await supabase.storage.from("project-plans").remove(pageImagePaths);
         }
@@ -301,6 +406,7 @@ export default function Dashboard() {
       const filePaths = (files || [])
         .map((file) => file.file_path)
         .filter(Boolean);
+
       if (filePaths.length > 0) {
         await supabase.storage.from("project-files").remove(filePaths);
       }
@@ -309,18 +415,22 @@ export default function Dashboard() {
         .from("project_files")
         .delete()
         .eq("project_id", project.id);
+
       await supabase
         .from("project_items")
         .delete()
         .eq("project_id", project.id);
+
       await supabase
         .from("project_categories")
         .delete()
         .eq("project_id", project.id);
+
       await supabase
         .from("project_estimates")
         .delete()
         .eq("project_id", project.id);
+
       await supabase
         .from("project_plans")
         .delete()
@@ -330,6 +440,7 @@ export default function Dashboard() {
         .from("projects")
         .delete()
         .eq("id", project.id);
+
       if (error) throw error;
 
       setProjectToDelete(null);
@@ -351,23 +462,23 @@ export default function Dashboard() {
     <>
       <AppNavbar />
 
-      <main className="min-h-screen bg-[#F2EEE6]">
+      <main className="min-h-screen bg-white">
         <div className="mx-auto max-w-7xl px-6 py-10 md:px-8 md:py-12">
           <section className="mb-10">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <div className="mb-4 inline-flex rounded-full border border-[#D9D2C3] bg-white/80 px-4 py-2 text-sm font-semibold text-[#2E7D6B] shadow-sm">
+                <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#D9D2C3]/80 bg-white px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-sm">
+                  <span className="h-2 w-2 rounded-full bg-[#2E7D6B]" />
                   Build smarter from the start
                 </div>
 
                 <h1 className="max-w-3xl text-4xl font-bold tracking-tight text-[#0F172A] md:text-5xl">
-                  Let’s understand what you’re trying to build.
+                  Plan with clarity before you commit.
                 </h1>
 
                 <p className="mt-4 max-w-2xl text-lg leading-8 text-slate-600">
-                  Budget My Build guides you through the early planning steps so
-                  your project starts with more clarity, not just another blank
-                  form.
+                  Create projects, organise plans and start shaping a realistic
+                  budget from one calm planning dashboard.
                 </p>
               </div>
 
@@ -377,14 +488,14 @@ export default function Dashboard() {
                   resetProjectForm();
                   setIsCreatingProject(true);
                 }}
-                className="rounded-2xl bg-[#4F46E5] px-6 py-4 text-center font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                className={primaryButtonClass}
               >
-                + Start Planning
+                Start Planning
               </button>
             </div>
 
             <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
-              <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+              <div className={`${cardClass} p-6`}>
                 <p className="text-sm font-medium text-slate-500">
                   Total Projects
                 </p>
@@ -393,7 +504,7 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+              <div className={`${cardClass} p-6`}>
                 <p className="text-sm font-medium text-slate-500">
                   Active Projects
                 </p>
@@ -402,7 +513,7 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+              <div className={`${cardClass} p-6`}>
                 <p className="text-sm font-medium text-slate-500">
                   Total Budget
                 </p>
@@ -411,30 +522,39 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+              <div className={`${cardClass} p-6`}>
                 <p className="text-sm font-medium text-slate-500">Next Start</p>
                 <p className="mt-2 text-xl font-bold text-[#0F172A]">
                   {nextStartingProject?.expected_start_date || "Not set"}
                 </p>
               </div>
             </div>
+
+            <div className="mt-4 rounded-2xl border border-[#4F46E5]/10 bg-[#F8F7FF] p-5">
+              <p className="text-sm font-bold text-[#4F46E5]">Planning insight</p>
+              <p className="mt-1 text-sm leading-6 text-slate-700">
+                Start by adding your project basics, then upload plans or create
+                rooms manually. Budget My Build will help turn early project
+                details into clearer cost guidance.
+              </p>
+            </div>
           </section>
 
           {isCreatingProject && (
             <section
               id="create-project"
-              className="mb-10 overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-xl"
+              className={`${cardClass} mb-10 overflow-hidden`}
             >
-              <div className="border-b border-[#D9D2C3]/80 bg-[#0F172A] px-8 py-7 text-white">
+              <div className="border-b border-[#D9D2C3]/70 bg-white px-8 py-7">
                 <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+                    <p className="text-sm font-semibold uppercase tracking-wide text-[#4F46E5]">
                       Guided project setup
                     </p>
-                    <h2 className="mt-1 text-3xl font-bold">
+                    <h2 className="mt-1 text-3xl font-bold text-[#0F172A]">
                       Let’s start planning
                     </h2>
-                    <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70">
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
                       Answer what you know now. You can refine everything later
                       once plans, rooms, features and costs become clearer.
                     </p>
@@ -443,15 +563,15 @@ export default function Dashboard() {
                   <button
                     type="button"
                     onClick={() => setIsCreatingProject(false)}
-                    className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/20"
+                    className={secondaryButtonClass}
                   >
                     Close
                   </button>
                 </div>
 
-                <div className="mt-6 h-2 rounded-full bg-white/15">
+                <div className="mt-6 h-2 rounded-full bg-[#F8F6F1]">
                   <div
-                    className="h-2 rounded-full bg-[#2E7D6B] transition-all"
+                    className="h-2 rounded-full bg-[#4F46E5] transition-all"
                     style={{ width: `${wizardProgress}%` }}
                   />
                 </div>
@@ -478,10 +598,10 @@ export default function Dashboard() {
                         onClick={() => setWizardStep(step)}
                         className={`rounded-2xl border px-4 py-3 text-left transition ${
                           active
-                            ? "border-[#4F46E5] bg-[#4F46E5]/10 text-[#0F172A]"
+                            ? "border-[#4F46E5] bg-[#F8F7FF] text-[#0F172A]"
                             : complete
-                              ? "border-[#2E7D6B]/40 bg-[#2E7D6B]/10 text-[#0F172A]"
-                              : "border-[#D9D2C3] bg-[#F2EEE6] text-slate-600"
+                              ? "border-[#2E7D6B]/30 bg-[#2E7D6B]/10 text-[#0F172A]"
+                              : "border-[#D9D2C3]/80 bg-white text-slate-600 hover:bg-[#F8F6F1]"
                         }`}
                       >
                         <span className="block text-xs font-semibold uppercase tracking-wide">
@@ -511,24 +631,17 @@ export default function Dashboard() {
                           key={type}
                           type="button"
                           onClick={() => setProjectType(type)}
-                          className={`rounded-3xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
+                          className={`rounded-2xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
                             projectType === type
-                              ? "border-[#4F46E5] bg-[#4F46E5]/10 ring-4 ring-[#4F46E5]/10"
-                              : "border-[#D9D2C3] bg-white"
+                              ? "border-[#4F46E5] bg-[#F8F7FF] ring-4 ring-[#4F46E5]/10"
+                              : "border-[#D9D2C3]/80 bg-white"
                           }`}
                         >
-                          <div className="mb-4 text-3xl">
-                            {type.includes("New")
-                              ? "🏡"
-                              : type.includes("Extension")
-                                ? "➕"
-                                : type.includes("Landscaping") ||
-                                    type.includes("Outdoor")
-                                  ? "🌿"
-                                  : "🔨"}
-                          </div>
                           <p className="text-lg font-bold text-[#0F172A]">
                             {type}
+                          </p>
+                          <p className="mt-2 text-sm text-slate-500">
+                            Set up a planning workspace for this project type.
                           </p>
                         </button>
                       ))}
@@ -554,13 +667,12 @@ export default function Dashboard() {
                           key={goal.value}
                           type="button"
                           onClick={() => setPlanningGoal(goal.value)}
-                          className={`rounded-3xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
+                          className={`rounded-2xl border p-5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
                             planningGoal === goal.value
-                              ? "border-[#4F46E5] bg-[#4F46E5]/10 ring-4 ring-[#4F46E5]/10"
-                              : "border-[#D9D2C3] bg-white"
+                              ? "border-[#4F46E5] bg-[#F8F7FF] ring-4 ring-[#4F46E5]/10"
+                              : "border-[#D9D2C3]/80 bg-white"
                           }`}
                         >
-                          <div className="mb-3 text-3xl">{goal.icon}</div>
                           <p className="text-lg font-bold text-[#0F172A]">
                             {goal.title}
                           </p>
@@ -712,40 +824,36 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => setHasPlansReady(true)}
-                        className={`rounded-3xl border p-6 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
+                        className={`rounded-2xl border p-6 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
                           hasPlansReady === true
-                            ? "border-[#4F46E5] bg-[#4F46E5]/10 ring-4 ring-[#4F46E5]/10"
-                            : "border-[#D9D2C3] bg-white"
+                            ? "border-[#4F46E5] bg-[#F8F7FF] ring-4 ring-[#4F46E5]/10"
+                            : "border-[#D9D2C3]/80 bg-white"
                         }`}
                       >
-                        <div className="mb-4 text-4xl">📄</div>
                         <p className="text-xl font-bold text-[#0F172A]">
                           Yes, I have plans
                         </p>
                         <p className="mt-2 text-sm text-slate-500">
-                          After creating the project, we’ll guide you to upload
-                          your plans and detect rooms, features and cost
-                          drivers.
+                          We’ll guide you to upload your plans and detect rooms,
+                          features and cost drivers.
                         </p>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => setHasPlansReady(false)}
-                        className={`rounded-3xl border p-6 text-left transition hover:-translate-y-0.5 hover:shadow-lg ${
+                        className={`rounded-2xl border p-6 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
                           hasPlansReady === false
-                            ? "border-[#4F46E5] bg-[#4F46E5]/10 ring-4 ring-[#4F46E5]/10"
-                            : "border-[#D9D2C3] bg-white"
+                            ? "border-[#4F46E5] bg-[#F8F7FF] ring-4 ring-[#4F46E5]/10"
+                            : "border-[#D9D2C3]/80 bg-white"
                         }`}
                       >
-                        <div className="mb-4 text-4xl">✍️</div>
                         <p className="text-xl font-bold text-[#0F172A]">
                           Not yet
                         </p>
                         <p className="mt-2 text-sm text-slate-500">
-                          No problem. You can create rooms manually, add
-                          features, track selections and still build an early
-                          budget.
+                          You can create rooms manually, add features, track
+                          selections and still build an early budget.
                         </p>
                       </button>
                     </div>
@@ -802,7 +910,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <div className="rounded-3xl border border-[#D9D2C3] bg-[#F2EEE6] p-5">
+                    <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F8F6F1] p-5">
                       <p className="text-sm font-semibold text-slate-500">
                         Project setup summary
                       </p>
@@ -843,7 +951,7 @@ export default function Dashboard() {
                       setWizardStep((current) => Math.max(current - 1, 1))
                     }
                     disabled={wizardStep === 1}
-                    className="rounded-xl border border-[#D9D2C3] bg-white px-6 py-3 font-semibold text-slate-700 transition hover:bg-[#F2EEE6] disabled:cursor-not-allowed disabled:opacity-40"
+                    className={`${secondaryButtonClass} disabled:cursor-not-allowed disabled:opacity-40`}
                   >
                     Back
                   </button>
@@ -854,7 +962,7 @@ export default function Dashboard() {
                       onClick={() =>
                         setWizardStep((current) => Math.min(current + 1, 6))
                       }
-                      className="rounded-xl bg-[#4F46E5] px-6 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                      className={primaryButtonClass}
                     >
                       Continue →
                     </button>
@@ -862,7 +970,7 @@ export default function Dashboard() {
                     <button
                       type="button"
                       onClick={createProject}
-                      className="rounded-xl bg-[#4F46E5] px-6 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                      className={primaryButtonClass}
                     >
                       Create Project →
                     </button>
@@ -875,7 +983,7 @@ export default function Dashboard() {
           <section>
             <div className="mb-6 flex items-end justify-between">
               <div>
-                <p className="text-sm font-semibold text-[#2E7D6B]">
+                <p className="text-sm font-semibold text-[#4F46E5]">
                   Project library
                 </p>
                 <h2 className="mt-1 text-3xl font-bold text-[#0F172A]">
@@ -888,8 +996,7 @@ export default function Dashboard() {
             </div>
 
             {projects.length === 0 ? (
-              <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-12 text-center shadow-sm">
-                <div className="mb-4 text-5xl">🏡</div>
+              <div className={`${cardClass} p-12 text-center`}>
                 <h3 className="mb-2 text-2xl font-bold text-[#0F172A]">
                   No projects yet
                 </h3>
@@ -899,7 +1006,7 @@ export default function Dashboard() {
                 <button
                   type="button"
                   onClick={() => setIsCreatingProject(true)}
-                  className="inline-flex rounded-2xl bg-[#4F46E5] px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
+                  className={primaryButtonClass}
                 >
                   Start Planning
                 </button>
@@ -907,76 +1014,114 @@ export default function Dashboard() {
             ) : (
               <div className="grid gap-5">
                 {projects.map((project) => {
-                  const stageProgress = getStageProgress(project.project_stage);
+                  const currentStage = project.project_stage || "Idea";
+                  const stageProgress = getStageProgress(currentStage);
+                  const stageMeta = getStageMeta(currentStage);
 
                   return (
                     <div
                       key={project.id}
-                      className="group rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl"
+                      className={`${cardClass} group overflow-hidden transition hover:-translate-y-1 hover:shadow-md`}
                     >
-                      <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+                      <div className="flex flex-col gap-6 p-6 lg:flex-row lg:items-stretch lg:justify-between">
                         <Link
                           href={`/projects/${project.id}`}
                           className="flex flex-1 gap-5"
                         >
-                          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-[#0F172A] text-2xl font-bold text-white">
-                            {project.name?.charAt(0)?.toUpperCase() || "B"}
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-[#D9D2C3]/40 bg-[#F8F6F1] text-lg font-bold tracking-tight text-[#0F172A]">
+                            {getProjectInitials(project.name)}
                           </div>
 
-                          <div>
-                            <h3 className="text-2xl font-bold text-[#0F172A] group-hover:text-[#4F46E5]">
-                              {project.name}
-                            </h3>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-start gap-3">
+                              <div className="min-w-0 flex-1">
+                                <h3 className="truncate text-2xl font-bold text-[#0F172A] group-hover:text-[#4F46E5]">
+                                  {project.name}
+                                </h3>
 
-                            <p className="mt-2 line-clamp-2 text-slate-500">
-                              {project.description || "No description added."}
-                            </p>
+                                <p className="mt-2 line-clamp-2 text-slate-500">
+                                  {project.description || "No description added."}
+                                </p>
+                              </div>
 
-                            <div className="mt-4 flex flex-wrap gap-2">
-                              {project.project_type && (
-                                <span className="rounded-full border border-[#D9D2C3] bg-[#F2EEE6] px-3 py-1 text-sm text-slate-700">
-                                  {project.project_type}
-                                </span>
-                              )}
-                              {project.state && (
-                                <span className="rounded-full border border-[#D9D2C3] bg-[#F2EEE6] px-3 py-1 text-sm text-slate-700">
-                                  {project.state}
-                                </span>
-                              )}
-                              {project.project_stage && (
-                                <span className="rounded-full bg-[#2E7D6B] px-3 py-1 text-sm font-semibold text-white">
-                                  {project.project_stage}
-                                </span>
-                              )}
+                              <div
+                                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold ${stageMeta.bgClass} ${stageMeta.borderClass} ${stageMeta.textClass}`}
+                              >
+                                <span
+                                  className={`h-2 w-2 rounded-full ${stageMeta.dotClass}`}
+                                />
+                                {stageMeta.label}
+                              </div>
+                            </div>
+
+                            <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:max-w-xl">
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                  Current Stage
+                                </p>
+                                <p className={`mt-1 font-semibold ${stageMeta.textClass}`}>
+                                  {stageMeta.label}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                  Project Type
+                                </p>
+                                <p className="mt-1 font-semibold text-[#0F172A]">
+                                  {project.project_type || "Not set"}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </Link>
 
-                        <div className="min-w-[220px] md:text-right">
-                          <p className="text-sm text-slate-500">
-                            Budget Target
-                          </p>
-                          <p className="text-2xl font-bold text-[#0F172A]">
-                            ${formatMoney(Number(project.budget_target || 0))}
-                          </p>
+                        <div className="border-t border-[#D9D2C3]/50 pt-5 lg:min-w-[280px] lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                          <div className="flex items-start justify-between gap-4 lg:block lg:text-right">
+                            <div>
+                              <p className="text-sm text-slate-500">
+                                Budget Target
+                              </p>
+                              <p className="text-2xl font-bold text-[#0F172A]">
+                                ${formatMoney(Number(project.budget_target || 0))}
+                              </p>
+                            </div>
+                          </div>
 
-                          <div className="mt-4">
-                            <div className="mb-1 flex justify-between text-xs text-slate-500">
-                              <span>Planning progress</span>
+                          <div className="mt-5">
+                            <div className="mb-2 flex justify-between text-xs text-slate-500">
+                              <span>Planning journey</span>
                               <span>{stageProgress}%</span>
                             </div>
-                            <div className="h-2 w-full rounded-full bg-[#D9D2C3]">
-                              <div
-                                className="h-2 rounded-full bg-[#2E7D6B]"
-                                style={{ width: `${stageProgress}%` }}
-                              />
+
+                            <div className="flex items-center gap-1.5">
+                              {projectStages.map((stage) => {
+                                const activeIndex = projectStages.indexOf(currentStage);
+                                const stageIndex = projectStages.indexOf(stage);
+                                const isReached = stageIndex <= activeIndex;
+                                const isCurrent = stage === currentStage;
+
+                                return (
+                                  <div
+                                    key={stage}
+                                    title={stage}
+                                    className={`h-2 flex-1 rounded-full transition ${
+                                      isCurrent
+                                        ? stageMeta.dotClass
+                                        : isReached
+                                          ? "bg-[#2E7D6B]/60"
+                                          : "bg-slate-100"
+                                    }`}
+                                  />
+                                );
+                              })}
                             </div>
                           </div>
 
                           <div className="mt-5 flex flex-wrap justify-end gap-2">
                             <Link
                               href={`/projects/${project.id}`}
-                              className="rounded-xl border border-[#D9D2C3] px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-[#4F46E5] hover:bg-[#4F46E5] hover:text-white"
+                              className="rounded-2xl border border-[#D9D2C3]/80 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[#4F46E5] hover:text-[#4F46E5]"
                             >
                               Open Project →
                             </Link>
@@ -984,7 +1129,7 @@ export default function Dashboard() {
                             <button
                               type="button"
                               onClick={() => setProjectToDelete(project)}
-                              className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+                              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
                             >
                               Delete
                             </button>
@@ -1002,7 +1147,7 @@ export default function Dashboard() {
 
       {projectToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/50 p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-7 shadow-2xl">
             <p className="text-sm font-semibold uppercase tracking-wide text-red-600">
               Delete project
             </p>
@@ -1020,15 +1165,16 @@ export default function Dashboard() {
                 type="button"
                 onClick={() => setProjectToDelete(null)}
                 disabled={isDeletingProject}
-                className="rounded-xl border border-[#D9D2C3] bg-white px-5 py-3 font-semibold text-slate-700 hover:bg-[#F2EEE6] disabled:opacity-50"
+                className={`${secondaryButtonClass} disabled:opacity-50`}
               >
                 Cancel
               </button>
+
               <button
                 type="button"
                 onClick={() => deleteProject(projectToDelete)}
                 disabled={isDeletingProject}
-                className="rounded-xl bg-red-600 px-5 py-3 font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                className="rounded-2xl bg-red-600 px-5 py-3 font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
               >
                 {isDeletingProject ? "Deleting..." : "Delete Project"}
               </button>

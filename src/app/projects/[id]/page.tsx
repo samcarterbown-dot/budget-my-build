@@ -22,6 +22,89 @@ function getDisplaySqm(room: any) {
   return Number(room.estimated_sqm || room.estimate?.assumed_sqm || 0);
 }
 
+
+function getStageMeta(stage: string) {
+  const stageValue = String(stage || "").trim();
+
+  const stageMap: Record<
+    string,
+    { label: string; bar: string; softBg: string; text: string; border: string }
+  > = {
+    Idea: {
+      label: "Idea",
+      bar: "bg-slate-400",
+      softBg: "bg-slate-50",
+      text: "text-slate-700",
+      border: "border-slate-200",
+    },
+    Feasibility: {
+      label: "Feasibility",
+      bar: "bg-sky-500",
+      softBg: "bg-sky-50",
+      text: "text-sky-700",
+      border: "border-sky-200",
+    },
+    Planning: {
+      label: "Planning",
+      bar: "bg-[#4F46E5]",
+      softBg: "bg-[#F8F7FF]",
+      text: "text-[#4F46E5]",
+      border: "border-[#4F46E5]/20",
+    },
+    Design: {
+      label: "Design",
+      bar: "bg-violet-500",
+      softBg: "bg-violet-50",
+      text: "text-violet-700",
+      border: "border-violet-200",
+    },
+    Approvals: {
+      label: "Approvals",
+      bar: "bg-amber-500",
+      softBg: "bg-amber-50",
+      text: "text-amber-800",
+      border: "border-amber-200",
+    },
+    Quotes: {
+      label: "Quotes",
+      bar: "bg-orange-500",
+      softBg: "bg-orange-50",
+      text: "text-orange-700",
+      border: "border-orange-200",
+    },
+    Construction: {
+      label: "Construction",
+      bar: "bg-[#2E7D6B]",
+      softBg: "bg-emerald-50",
+      text: "text-[#2E7D6B]",
+      border: "border-emerald-200",
+    },
+    Completed: {
+      label: "Completed",
+      bar: "bg-green-500",
+      softBg: "bg-green-50",
+      text: "text-green-700",
+      border: "border-green-200",
+    },
+  };
+
+  return (
+    stageMap[stageValue] || {
+      label: stageValue || "Not set",
+      bar: "bg-slate-300",
+      softBg: "bg-slate-50",
+      text: "text-slate-700",
+      border: "border-slate-200",
+    }
+  );
+}
+
+function getStageProgressPercent(stage: string, stages: string[]) {
+  const index = stages.indexOf(stage);
+  if (index === -1) return 0;
+  return Math.round(((index + 1) / stages.length) * 100);
+}
+
 function countMatchingRooms(rooms: any[], matcher: (value: string) => boolean) {
   return rooms.filter((room) => matcher(getRoomTypeText(room))).length;
 }
@@ -275,6 +358,8 @@ export default function ProjectPage() {
   const [scaleRealMm, setScaleRealMm] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
   const [productCategoryFilter, setProductCategoryFilter] = useState("all");
+  const [expandedBudgetCategoryId, setExpandedBudgetCategoryId] = useState<string | null>(null);
+  const [showItemModal, setShowItemModal] = useState(false);
   const productStatuses = ["Planned", "Purchased"];
 
   const [isEditingProject, setIsEditingProject] = useState(false);
@@ -2155,8 +2240,9 @@ export default function ProjectPage() {
     }
 
     resetItemForm();
+    setShowItemModal(false);
     await markEstimateOutdated();
-    loadItems();
+    await loadItems();
   }
 
   async function scrapeProductInfo() {
@@ -2227,6 +2313,7 @@ export default function ProjectPage() {
   }
 
   async function startEditItem(item: any) {
+    setShowItemModal(true);
     setEditingItemId(item.id);
     setItemName(item.item_name || "");
     setEstimatedCost(String(item.estimated_cost || ""));
@@ -2544,12 +2631,7 @@ export default function ProjectPage() {
     }
 
     setActiveTab("budget");
-
-    setTimeout(() => {
-      document
-        .getElementById("cost-item-form")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
+    setShowItemModal(true);
 
     await loadPlanFeatures();
     await loadCategories();
@@ -2711,9 +2793,24 @@ export default function ProjectPage() {
   const itemCount = items.length;
 
   const visibleCategories = categories.slice().sort((a, b) => {
-    if (String(a.name || "").toLowerCase() === "other") return 1;
-    if (String(b.name || "").toLowerCase() === "other") return -1;
-    return String(a.name || "").localeCompare(String(b.name || ""));
+    const aItemCount = items.filter((item) => item.category_id === a.id).length;
+    const bItemCount = items.filter((item) => item.category_id === b.id).length;
+
+    const aHasItems = aItemCount > 0;
+    const bHasItems = bItemCount > 0;
+
+    if (aHasItems && !bHasItems) return -1;
+    if (!aHasItems && bHasItems) return 1;
+
+    const aName = String(a.name || "");
+    const bName = String(b.name || "");
+    const aIsOther = aName.toLowerCase() === "other";
+    const bIsOther = bName.toLowerCase() === "other";
+
+    if (aIsOther && !bIsOther) return 1;
+    if (!aIsOther && bIsOther) return -1;
+
+    return aName.localeCompare(bName);
   });
 
   const latestEstimateBreakdown = latestEstimate?.breakdown || {};
@@ -2853,6 +2950,15 @@ export default function ProjectPage() {
       readinessSteps.length) *
       100,
   );
+
+  const stageMeta = getStageMeta(project?.project_stage || "");
+  const projectStageProgressPercent = getStageProgressPercent(
+    project?.project_stage || "",
+    projectStages,
+  );
+  const projectLocation = [project?.suburb, project?.postcode]
+    .filter(Boolean)
+    .join(" ");
 
   function getNextSetupTab() {
     const nextStep = readinessSteps.find((step) => step.status !== "done");
@@ -3453,12 +3559,12 @@ export default function ProjectPage() {
         }
       `}</style>
 
-      <main className="min-h-screen bg-[#F2EEE6]">
-        <header className="border-b border-[#D9D2C3]/80 bg-white/80 backdrop-blur-xl">
+      <main className="min-h-screen bg-white">
+        <header className="border-b border-[#D9D2C3]/50 bg-white/95 backdrop-blur-xl">
           <div className="mx-auto max-w-7xl px-6 py-8 md:px-8 md:py-10">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-3xl">
-                <div className="mb-4 inline-flex rounded-full border border-[#D9D2C3] bg-[#F2EEE6] px-4 py-2 text-sm font-semibold text-[#2E7D6B]">
+                <div className="mb-4 inline-flex rounded-full border border-[#D9D2C3] bg-[#F8F6F1] px-4 py-2 text-sm font-semibold text-[#2E7D6B]">
                   Build smarter from the start
                 </div>
 
@@ -3471,40 +3577,61 @@ export default function ProjectPage() {
                     "Understand your likely costs, organise your plans, track selections and make informed decisions before construction begins."}
                 </p>
 
-                <div className="mt-5 flex flex-wrap gap-2">
-                  {project.project_type && (
-                    <span className="rounded-full border border-[#D9D2C3] bg-white px-3 py-1 text-sm font-semibold text-slate-700">
-                      {project.project_type}
-                    </span>
-                  )}
-                  {project.project_stage && (
-                    <span className="rounded-full bg-[#2E7D6B] px-3 py-1 text-sm font-semibold text-white">
-                      {project.project_stage}
-                    </span>
-                  )}
-                  {[project.suburb, project.state].filter(Boolean).length >
-                    0 && (
-                    <span className="rounded-full border border-[#D9D2C3] bg-white px-3 py-1 text-sm font-semibold text-slate-700">
-                      {[project.suburb, project.state]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </span>
-                  )}
+                <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                  <div className={`rounded-2xl border px-4 py-3 ${stageMeta.softBg} ${stageMeta.border}`}>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Current Stage
+                    </p>
+                    <p className={`mt-1 text-sm font-bold ${stageMeta.text}`}>
+                      {stageMeta.label}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Project Type
+                    </p>
+                    <p className="mt-1 text-sm font-bold text-[#0F172A]">
+                      {project.project_type || "Not set"}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Location
+                    </p>
+                    <p className="mt-1 text-sm font-bold text-[#0F172A]">
+                      {projectLocation || "Not set"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 max-w-xl">
+                  <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-500">
+                    <span>Build journey</span>
+                    <span>{projectStageProgressPercent}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100">
+                    <div
+                      className={`h-2 rounded-full ${stageMeta.bar}`}
+                      style={{ width: `${projectStageProgressPercent}%` }}
+                    />
+                  </div>
                 </div>
               </div>
 
               <div className="grid w-full gap-4 sm:grid-cols-2 lg:w-auto lg:min-w-[460px]">
-                <div className="rounded-3xl border border-[#D9D2C3]/80 bg-[#0F172A] p-6 text-white shadow-sm">
-                  <p className="text-sm text-white/70">Tracked Budget Items</p>
+                <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
+                  <p className="text-sm text-slate-600">Tracked Budget Items</p>
                   <p className="mt-2 text-3xl font-bold">
                     ${formatMoney(projectTotal)}
                   </p>
-                  <p className="mt-2 text-xs text-white/60">
+                  <p className="mt-2 text-xs text-slate-500">
                     Current total from saved selections and cost items.
                   </p>
                 </div>
 
-                <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-sm font-semibold text-slate-500">
@@ -3518,7 +3645,7 @@ export default function ProjectPage() {
                       Guided
                     </span>
                   </div>
-                  <div className="mt-4 h-2 rounded-full bg-[#D9D2C3]">
+                  <div className="mt-4 h-2 rounded-full bg-slate-100">
                     <div
                       className="h-2 rounded-full bg-[#2E7D6B]"
                       style={{ width: `${projectReadinessPercent}%` }}
@@ -3528,7 +3655,7 @@ export default function ProjectPage() {
               </div>
             </div>
 
-            <div className="mt-8 rounded-3xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-5">
+            <div className="mt-8 rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-5">
               <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-[#0F172A]">
@@ -3576,7 +3703,7 @@ export default function ProjectPage() {
                         ? "border-[#2E7D6B]/30 bg-white"
                         : stage.status === "warning"
                           ? "border-amber-200 bg-amber-50"
-                          : "border-[#D9D2C3] bg-white/70"
+                          : "border-[#D9D2C3] bg-white"
                     }`}
                   >
                     <div className="text-2xl">
@@ -3594,7 +3721,7 @@ export default function ProjectPage() {
               </div>
             </div>
 
-            <div className="mt-8 flex gap-2 overflow-x-auto rounded-full border border-[#D9D2C3]/80 bg-white p-2 shadow-sm">
+            <div className="mt-8 flex gap-2 overflow-x-auto rounded-full border border-[#D9D2C3]/60 bg-white p-2 shadow-sm">
               {[
                 { id: "overview", label: "Project Summary" },
                 { id: "plans", label: "Plans & Insights" },
@@ -3609,7 +3736,7 @@ export default function ProjectPage() {
                   className={`whitespace-nowrap rounded-full px-5 py-3 text-sm font-semibold transition ${
                     activeTab === tab.id
                       ? "bg-[#0F172A] text-white shadow-sm"
-                      : "text-slate-600 hover:bg-[#F2EEE6] hover:text-[#0F172A]"
+                      : "text-slate-600 hover:bg-[#F8F6F1] hover:text-[#0F172A]"
                   }`}
                 >
                   {tab.label}
@@ -3618,21 +3745,21 @@ export default function ProjectPage() {
             </div>
 
             <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-5">
-              <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
                 <p className="text-sm text-slate-500">Budget Target</p>
                 <p className="text-2xl font-bold text-[#0F172A]">
                   ${formatMoney(budgetTarget)}
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
                 <p className="text-sm text-slate-500">Tracked Total</p>
                 <p className="text-2xl font-bold text-[#0F172A]">
                   ${formatMoney(projectTotal)}
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
                 <p className="text-sm text-slate-500">Remaining Budget</p>
                 <p
                   className={`text-2xl font-bold ${
@@ -3643,14 +3770,14 @@ export default function ProjectPage() {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
                 <p className="text-sm text-slate-500">Purchased Total</p>
                 <p className="text-2xl font-bold text-[#2E7D6B]">
                   ${formatMoney(purchasedTotal)}
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5 shadow-sm">
+              <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
                 <p className="text-sm text-slate-500">Budget Items</p>
                 <p className="text-2xl font-bold text-[#0F172A]">{itemCount}</p>
               </div>
@@ -3661,9 +3788,9 @@ export default function ProjectPage() {
         <div id="project-main-content" className="max-w-7xl mx-auto px-8 py-10">
           {activeTab === "plans" && (
             <div className="space-y-6">
-              <section className="overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-sm">
-                <div className="bg-gradient-to-r from-[#0F172A] to-[#1E293B] px-8 py-7 text-white">
-                  <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+              <section className="overflow-hidden rounded-2xl border border-[#D9D2C3]/60 bg-white shadow-sm">
+                <div className="bg-white border-b border-[#D9D2C3]/60 px-8 py-7 text-[#0F172A]">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-[#4F46E5]">
                     Plans & Insights
                   </p>
                   <div className="mt-3 flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -3671,19 +3798,19 @@ export default function ProjectPage() {
                       <h2 className="text-3xl font-bold md:text-4xl">
                         Understand what is inside your plans
                       </h2>
-                      <p className="mt-3 max-w-3xl text-sm leading-6 text-white/70">
+                      <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">
                         Upload your plans to help identify rooms, features,
                         measurements and likely cost drivers. No plans yet? You
                         can still add rooms and features manually.
                       </p>
                     </div>
 
-                    <div className="min-w-[260px] rounded-2xl bg-white/10 p-4">
-                      <div className="mb-2 flex justify-between text-sm font-semibold text-white/80">
+                    <div className="min-w-[260px] rounded-2xl bg-[#F8F7FF] border border-[#4F46E5]/10 p-4">
+                      <div className="mb-2 flex justify-between text-sm font-semibold text-slate-600">
                         <span>Plans progress</span>
                         <span>{plansInsightPercent}%</span>
                       </div>
-                      <div className="h-3 overflow-hidden rounded-full bg-white/20">
+                      <div className="h-3 overflow-hidden rounded-full bg-slate-100">
                         <div
                           className="h-full rounded-full bg-[#2E7D6B]"
                           style={{ width: `${plansInsightPercent}%` }}
@@ -3693,14 +3820,14 @@ export default function ProjectPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 border-b border-[#D9D2C3]/80 bg-[#F2EEE6] p-5 md:grid-cols-5">
+                <div className="grid gap-3 border-b border-[#D9D2C3]/60 bg-[#F8F6F1] p-5 md:grid-cols-5">
                   {plansInsightSteps.map((step) => (
                     <div
                       key={step.label}
                       className={`rounded-2xl border px-4 py-3 ${
                         step.done
                           ? "border-[#2E7D6B]/30 bg-white"
-                          : "border-[#D9D2C3] bg-white/70"
+                          : "border-[#D9D2C3] bg-white"
                       }`}
                     >
                       <div className="text-2xl">{step.done ? "✓" : "○"}</div>
@@ -3712,13 +3839,13 @@ export default function ProjectPage() {
                 </div>
 
                 <div className="grid gap-4 p-6 md:grid-cols-4">
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
                     <p className="text-sm text-slate-500">Rooms Identified</p>
                     <p className="mt-1 text-3xl font-bold text-[#0F172A]">
                       {planRooms.length}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
                     <p className="text-sm text-slate-500">
                       Features Identified
                     </p>
@@ -3726,13 +3853,13 @@ export default function ProjectPage() {
                       {groupedPlanFeatures.length}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
                     <p className="text-sm text-slate-500">Plans Uploaded</p>
                     <p className="mt-1 text-3xl font-bold text-[#0F172A]">
                       {plans.length}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
                     <p className="text-sm text-slate-500">Approx. Floor Area</p>
                     <p className="mt-1 text-3xl font-bold text-[#0F172A]">
                       {identifiedFloorArea > 0
@@ -3743,7 +3870,7 @@ export default function ProjectPage() {
                 </div>
               </section>
 
-              <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+              <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-8 shadow-sm">
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <p className="text-sm font-semibold text-[#2E7D6B]">
@@ -3761,19 +3888,19 @@ export default function ProjectPage() {
                   </div>
 
                   <div className="grid w-full gap-3 sm:grid-cols-3 lg:w-auto lg:min-w-[420px]">
-                    <div className="rounded-2xl bg-[#F2EEE6] p-4 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] p-4 text-center">
                       <p className="text-xs text-slate-500">Windows</p>
                       <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                         {windowCount}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#F2EEE6] p-4 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] p-4 text-center">
                       <p className="text-xs text-slate-500">External Doors</p>
                       <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                         {externalDoorCount}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#F2EEE6] p-4 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] p-4 text-center">
                       <p className="text-xs text-slate-500">Wet Areas</p>
                       <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                         {wetAreaCount}
@@ -3784,7 +3911,7 @@ export default function ProjectPage() {
               </section>
 
               <section className="grid gap-6 lg:grid-cols-2">
-                <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+                <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-8 shadow-sm">
                   <p className="text-sm font-semibold text-[#2E7D6B]">
                     Measurements Identified
                   </p>
@@ -3792,7 +3919,7 @@ export default function ProjectPage() {
                     Key measurements for planning
                   </h3>
                   <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl bg-[#F2EEE6] p-4">
+                    <div className="rounded-2xl bg-[#F8F6F1] p-4">
                       <p className="text-xs text-slate-500">
                         Approx. Floor Area
                       </p>
@@ -3802,7 +3929,7 @@ export default function ProjectPage() {
                           : "Not available yet"}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#F2EEE6] p-4">
+                    <div className="rounded-2xl bg-[#F8F6F1] p-4">
                       <p className="text-xs text-slate-500">Rooms with Area</p>
                       <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                         {
@@ -3818,7 +3945,7 @@ export default function ProjectPage() {
                   </p>
                 </div>
 
-                <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+                <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-8 shadow-sm">
                   <p className="text-sm font-semibold text-[#2E7D6B]">
                     Project Insights
                   </p>
@@ -3835,7 +3962,7 @@ export default function ProjectPage() {
                       {projectInsightItems.map((item) => (
                         <div
                           key={item}
-                          className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700"
+                          className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4 text-sm text-slate-700"
                         >
                           {item}
                         </div>
@@ -3847,7 +3974,7 @@ export default function ProjectPage() {
 
               <section
                 id="plans-upload-section"
-                className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm"
+                className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm"
               >
                 <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
@@ -3867,14 +3994,14 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={loadPlans}
-                    className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:bg-[#F2EEE6] hover:shadow-md"
+                    className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition-all hover:bg-[#F8F6F1] hover:shadow-md"
                   >
                     ↻ Refresh
                   </button>
                 </div>
 
                 <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-                  <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-5">
+                  <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F8F6F1] p-5">
                     <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-2xl shadow-sm">
                       📐
                     </div>
@@ -3924,7 +4051,7 @@ export default function ProjectPage() {
                     </label>
 
                     {planUploadFile && (
-                      <div className="mt-4 rounded-2xl border border-[#D9D2C3]/80 bg-white p-3">
+                      <div className="mt-4 rounded-2xl border border-[#D9D2C3]/60 bg-white p-3">
                         <p className="text-xs font-semibold text-slate-500">
                           Selected file
                         </p>
@@ -3944,7 +4071,7 @@ export default function ProjectPage() {
                     </button>
                   </div>
 
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
                     <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <h3 className="text-xl font-bold text-[#0F172A]">
@@ -3955,13 +4082,13 @@ export default function ProjectPage() {
                           project.
                         </p>
                       </div>
-                      <span className="rounded-full bg-[#F2EEE6] px-3 py-1 text-xs font-semibold text-slate-600">
+                      <span className="rounded-full bg-[#F8F6F1] px-3 py-1 text-xs font-semibold text-slate-600">
                         {plans.length} uploaded
                       </span>
                     </div>
 
                     {plans.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-6 text-center">
+                      <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F8F6F1] p-6 text-center">
                         <div className="mb-3 text-4xl">📄</div>
                         <h4 className="text-lg font-bold text-[#0F172A]">
                           No plans uploaded yet
@@ -3977,7 +4104,7 @@ export default function ProjectPage() {
                         {plans.map((plan) => (
                           <div
                             key={plan.id}
-                            className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 shadow-sm"
+                            className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 shadow-sm"
                           >
                             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                               <div className="min-w-0 flex-1">
@@ -4034,7 +4161,7 @@ export default function ProjectPage() {
 
                                 <button
                                   onClick={() => openPlan(plan.storage_path)}
-                                  className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-[#F2EEE6]"
+                                  className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-[#F8F6F1]"
                                 >
                                   Open
                                 </button>
@@ -4057,7 +4184,7 @@ export default function ProjectPage() {
                 </div>
               </section>
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                 <h3 className="text-2xl font-bold mb-3">Detected Plan Pages</h3>
                 <p className="text-gray-500 mb-6">
                   Review the pages created from your uploaded plans, label the
@@ -4083,10 +4210,10 @@ export default function ProjectPage() {
                             selectPlanPageForRooms(page);
                           }
                         }}
-                        className={`cursor-pointer rounded-2xl border p-5 bg-white flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all hover:-translate-y-0.5 hover:shadow-lg ${
+                        className={`cursor-pointer rounded-2xl border p-5 bg-white flex flex-col md:flex-row md:items-center justify-between gap-5 transition-all hover:-translate-y-0.5 hover:shadow-md ${
                           activeRoomPage?.id === page.id || page.is_selected
                             ? "border-[#4F46E5] ring-2 ring-[#4F46E5]/20 shadow-md"
-                            : "border-[#D9D2C3]/80"
+                            : "border-[#D9D2C3]/60"
                         }`}
                       >
                         {page.signedUrl && (
@@ -4182,7 +4309,7 @@ export default function ProjectPage() {
                               event.stopPropagation();
                               selectPlanPageForRooms(page);
                             }}
-                            className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg"
+                            className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md"
                           >
                             Review this floor
                           </button>
@@ -4193,7 +4320,7 @@ export default function ProjectPage() {
                               suggestRoomsForPage(page.id);
                             }}
                             disabled={suggestingRoomsPageId === page.id}
-                            className="rounded-full bg-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#256B5C] hover:shadow-lg disabled:opacity-50"
+                            className="rounded-full bg-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#256B5C] hover:shadow-md disabled:opacity-50"
                           >
                             {suggestingRoomsPageId === page.id
                               ? "Preparing..."
@@ -4205,7 +4332,7 @@ export default function ProjectPage() {
                               event.stopPropagation();
                               openPlanPage(page.image_path);
                             }}
-                            className="rounded-full border border-[#D9D2C3] bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-[#F2EEE6] hover:shadow-md"
+                            className="rounded-full border border-[#D9D2C3] bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-[#F8F6F1] hover:shadow-md"
                           >
                             Open
                           </button>
@@ -4228,7 +4355,7 @@ export default function ProjectPage() {
 
               <section
                 id="rooms-identified-section"
-                className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8"
+                className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8"
               >
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
                   <div>
@@ -4254,7 +4381,7 @@ export default function ProjectPage() {
                     <button
                       onClick={() => suggestRoomsForPage(activeRoomPage.id)}
                       disabled={suggestingRoomsPageId === activeRoomPage.id}
-                      className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-5 py-3 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all disabled:opacity-50 disabled:hover:scale-100"
+                      className="rounded-full bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-md transition-all disabled:opacity-50 disabled:hover:scale-100"
                     >
                       {suggestingRoomsPageId === activeRoomPage.id
                         ? "Preparing Suggestions..."
@@ -4284,14 +4411,14 @@ export default function ProjectPage() {
                         <button
                           type="button"
                           onClick={loadPlanRooms}
-                          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] hover:shadow-md transition-all"
+                          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F8F6F1] hover:shadow-md transition-all"
                         >
                           ↻ Refresh Rooms
                         </button>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-5">
+                    <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-5">
                       <h4 className="mb-4 text-xl font-bold text-[#0F172A]">
                         Add Room Manually
                       </h4>
@@ -4389,7 +4516,7 @@ export default function ProjectPage() {
                         <button
                           type="button"
                           onClick={addPlanRoom}
-                          className="rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                          className="rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md active:translate-y-0"
                         >
                           Add Room
                         </button>
@@ -4403,7 +4530,7 @@ export default function ProjectPage() {
                           {planRooms.map((room) => (
                             <div
                               key={room.id}
-                              className="border border-[#D9D2C3]/80 rounded-2xl p-5 bg-white shadow-sm"
+                              className="border border-[#D9D2C3]/60 rounded-2xl p-5 bg-white shadow-sm"
                             >
                               <div className="flex justify-between gap-4 items-start">
                                 <div>
@@ -4466,7 +4593,7 @@ export default function ProjectPage() {
                   </div>
                 ) : (
                   <div className="grid lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-1 border border-[#D9D2C3]/80 rounded-2xl p-5 bg-[#F2EEE6]">
+                    <div className="lg:col-span-1 border border-[#D9D2C3]/60 rounded-2xl p-5 bg-[#F8F6F1]">
                       <p className="text-sm text-gray-500 mb-1">
                         Adding rooms for
                       </p>
@@ -4580,7 +4707,7 @@ export default function ProjectPage() {
 
                         <button
                           onClick={addPlanRoom}
-                          className="w-full rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                          className="w-full rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md active:translate-y-0"
                         >
                           Add Room
                         </button>
@@ -4588,8 +4715,8 @@ export default function ProjectPage() {
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">
-                      <div className="overflow-hidden rounded-2xl border border-[#D9D2C3]/80 bg-white shadow-sm">
-                        <div className="flex flex-col gap-3 border-b border-[#D9D2C3]/80 bg-[#F2EEE6] px-5 py-4 md:flex-row md:items-center md:justify-between">
+                      <div className="overflow-hidden rounded-2xl border border-[#D9D2C3]/60 bg-white shadow-sm">
+                        <div className="flex flex-col gap-3 border-b border-[#D9D2C3]/60 bg-[#F8F6F1] px-5 py-4 md:flex-row md:items-center md:justify-between">
                           <div>
                             <p className="text-sm font-semibold text-[#2E7D6B]">
                               Selected floor plan
@@ -4615,7 +4742,7 @@ export default function ProjectPage() {
                             disabled={
                               suggestingRoomsPageId === activeRoomPage.id
                             }
-                            className="rounded-full bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg disabled:opacity-50"
+                            className="rounded-full bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md disabled:opacity-50"
                           >
                             {suggestingRoomsPageId === activeRoomPage.id
                               ? "Preparing Suggestions..."
@@ -4634,7 +4761,7 @@ export default function ProjectPage() {
                             <img
                               src={activeRoomPageUrl}
                               alt="Selected floor plan"
-                              className="max-h-[520px] w-full rounded-2xl border border-[#D9D2C3]/80 object-contain bg-white"
+                              className="max-h-[520px] w-full rounded-2xl border border-[#D9D2C3]/60 object-contain bg-white"
                             />
                           </button>
                         ) : (
@@ -4648,7 +4775,7 @@ export default function ProjectPage() {
                       {planRooms.filter(
                         (room) => room.plan_page_id === activeRoomPage.id,
                       ).length === 0 ? (
-                        <div className="border border-[#D9D2C3]/80 rounded-2xl p-6 text-gray-500 bg-white">
+                        <div className="border border-[#D9D2C3]/60 rounded-2xl p-6 text-gray-500 bg-white">
                           No rooms added for this page yet.
                         </div>
                       ) : (
@@ -4663,13 +4790,13 @@ export default function ProjectPage() {
                                 className={
                                   editingRoomId === room.id
                                     ? "fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4"
-                                    : "border border-[#D9D2C3]/80 rounded-2xl p-5 bg-white shadow-sm"
+                                    : "border border-[#D9D2C3]/60 rounded-2xl p-5 bg-white shadow-sm"
                                 }
                               >
                                 <div
                                   className={
                                     editingRoomId === room.id
-                                      ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-2xl"
+                                      ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-xl"
                                       : ""
                                   }
                                 >
@@ -4793,14 +4920,14 @@ export default function ProjectPage() {
                                       <div className="flex gap-3">
                                         <button
                                           onClick={() => savePlanRoom(room.id)}
-                                          className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
+                                          className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md transition-all"
                                         >
                                           Save
                                         </button>
 
                                         <button
                                           onClick={cancelEditPlanRoom}
-                                          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] transition-all"
+                                          className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F8F6F1] transition-all"
                                         >
                                           Cancel
                                         </button>
@@ -4891,7 +5018,7 @@ export default function ProjectPage() {
 
               <section
                 id="features-identified-section"
-                className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8"
+                className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8"
               >
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
                   <div>
@@ -4908,13 +5035,13 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={loadPlanFeatures}
-                    className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] hover:shadow-md transition-all"
+                    className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F8F6F1] hover:shadow-md transition-all"
                   >
                     ↻ Refresh Features
                   </button>
                 </div>
 
-                <div className="mb-6 rounded-2xl border bg-[#F2EEE6] p-5">
+                <div className="mb-6 rounded-2xl border bg-[#F8F6F1] p-5">
                   <h4 className="text-lg font-bold mb-4">
                     Add Feature Manually
                   </h4>
@@ -5013,7 +5140,7 @@ export default function ProjectPage() {
                   <button
                     type="button"
                     onClick={addPlanFeature}
-                    className="mt-4 rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg active:translate-y-0"
+                    className="mt-4 rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md active:translate-y-0"
                   >
                     Add Feature
                   </button>
@@ -5032,13 +5159,13 @@ export default function ProjectPage() {
                         className={
                           editingFeatureGroupId === feature.id
                             ? "fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4"
-                            : "border border-[#D9D2C3]/80 rounded-2xl p-5 bg-white shadow-sm"
+                            : "border border-[#D9D2C3]/60 rounded-2xl p-5 bg-white shadow-sm"
                         }
                       >
                         <div
                           className={
                             editingFeatureGroupId === feature.id
-                              ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-2xl"
+                              ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-xl"
                               : ""
                           }
                         >
@@ -5124,14 +5251,14 @@ export default function ProjectPage() {
                               <div className="flex gap-3">
                                 <button
                                   onClick={() => saveFeatureGroup(feature)}
-                                  className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
+                                  className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md transition-all"
                                 >
                                   Save
                                 </button>
 
                                 <button
                                   onClick={cancelEditFeatureGroup}
-                                  className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F2EEE6] transition-all"
+                                  className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-[#F8F6F1] transition-all"
                                 >
                                   Cancel
                                 </button>
@@ -5256,659 +5383,223 @@ export default function ProjectPage() {
 
           {activeTab === "budget" && (
             <div className="space-y-8">
-              <section className="overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-sm">
-                <div className="bg-gradient-to-r from-[#0F172A] to-[#1E293B] px-7 py-6 text-white">
+              <section className="overflow-hidden rounded-2xl border border-[#D9D2C3]/60 bg-white shadow-sm">
+                <div className="border-b border-[#D9D2C3]/60 bg-white px-7 py-6">
                   <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                     <div>
-                      <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
-                        Budget & Selections
+                      <p className="text-sm font-semibold text-[#4F46E5]">
+                        Budget categories
                       </p>
-                      <h2 className="mt-2 text-3xl font-bold">
-                        Plan what you are choosing and what it may cost
+                      <h2 className="mt-2 text-3xl font-bold text-[#0F172A]">
+                        Budget & selections
                       </h2>
-                      <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70">
-                        Add products, allowances and selection ideas. You can import
-                        product details from a URL, connect items to rooms or
-                        features, and keep category budgets updated as your choices
-                        become clearer.
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
+                        Review category budgets first, then expand a category to manage the items inside it.
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={exportBudgetItemsCsv}
-                      className="rounded-2xl border border-white/20 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F2EEE6]"
-                    >
-                      Export Budget Items CSV
-                    </button>
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickCategoryName("");
+                          setQuickCategoryBudget("");
+                          setShowQuickCategoryModal(true);
+                        }}
+                        className="rounded-2xl border border-[#D9D2C3]/70 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:border-[#4F46E5]/30 hover:bg-[#F8F7FF] hover:text-[#4F46E5]"
+                      >
+                        + Add Category
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={exportBudgetItemsCsv}
+                        className="rounded-2xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md"
+                      >
+                        Export CSV
+                      </button>
+                    </div>
                   </div>
                 </div>
+
                 <div className="grid gap-4 p-6 md:grid-cols-4">
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-5">
-                    <p className="text-sm font-semibold text-slate-500">
-                      Target Budget
-                    </p>
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">Target Budget</p>
                     <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                       ${formatMoney(budgetTarget)}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
-                    <p className="text-sm font-semibold text-slate-500">
-                      Tracked Selections
-                    </p>
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">Tracked Selections</p>
                     <p className="mt-1 text-2xl font-bold text-[#0F172A]">
                       ${formatMoney(projectTotal)}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
-                    <p className="text-sm font-semibold text-slate-500">
-                      Budget Remaining
-                    </p>
-                    <p
-                      className={`mt-1 text-2xl font-bold ${remainingBudget < 0 ? "text-red-600" : "text-[#2E7D6B]"}`}
-                    >
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">Budget Remaining</p>
+                    <p className={`mt-1 text-2xl font-bold ${remainingBudget < 0 ? "text-red-600" : "text-[#2E7D6B]"}`}>
                       ${formatMoney(remainingBudget)}
                     </p>
                   </div>
-                  <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-5">
-                    <p className="text-sm font-semibold text-slate-500">
-                      Items Added
-                    </p>
-                    <p className="mt-1 text-2xl font-bold text-[#0F172A]">
-                      {itemCount}
-                    </p>
+                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
+                    <p className="text-sm font-semibold text-slate-500">Items Added</p>
+                    <p className="mt-1 text-2xl font-bold text-[#0F172A]">{itemCount}</p>
                   </div>
                 </div>
               </section>
 
-              <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-                <div className="space-y-8">
-                  <section
-                    id="cost-item-form"
-                    className={
-                      editingItemId
-                        ? "fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4"
-                        : `bg-white border border-[#D9D2C3]/80 rounded-2xl p-6 transition-all duration-500 ${
-                            itemFormPulse
-                              ? "ring-4 ring-blue-300 shadow-2xl scale-[1.01]"
-                              : ""
-                          }`
-                    }
+              <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
+                <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-[#4F46E5]">Budget categories</p>
+                    <h3 className="mt-1 text-2xl font-bold text-[#0F172A]">
+                      Category list
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Categories with saved items appear first. Empty categories stay lower in the list until you add items.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickCategoryName("");
+                      setQuickCategoryBudget("");
+                      setShowQuickCategoryModal(true);
+                    }}
+                    className="rounded-2xl border border-[#D9D2C3]/70 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:border-[#4F46E5]/30 hover:bg-[#F8F7FF] hover:text-[#4F46E5]"
                   >
-                    <div
-                      className={
-                        editingItemId
-                          ? "max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-white p-6 shadow-2xl"
-                          : ""
-                      }
-                    >
-                      <p className="text-sm font-semibold uppercase tracking-wide text-[#2E7D6B]">
-                        Selection item
-                      </p>
-                      <h2 className="mt-1 text-2xl font-bold mb-2">
-                        {editingItemId
-                          ? "Edit Selection or Cost Item"
-                          : "Add Selection or Cost Item"}
-                      </h2>
-                      <p className="mb-5 text-sm text-slate-500">
-                        Add a product, allowance or supplier item. Start with
-                        the supplier link if you have one, then confirm the item
-                        details, category and costing method.
-                      </p>
-
-                      {editingItemId && (
-                        <p className="text-sm text-blue-600 font-medium mb-5">
-                          You are editing an existing cost item. Save changes
-                          when done.
-                        </p>
-                      )}
-
-                      <div className="mb-5 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
-                        <p className="text-sm font-bold text-[#0F172A]">
-                          1. Supplier details optional
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Paste a product URL first if you have one. We can
-                          import details, then you can review and adjust before
-                          saving.
-                        </p>
-                      </div>
-
-                      <label className="mb-1 block text-sm font-semibold text-gray-700">
-                        Supplier product URL optional
-                      </label>
-                      <input
-                        className="border rounded-xl p-4 block w-full mb-4"
-                        placeholder="https://supplier.com/product"
-                        value={supplierUrl}
-                        onChange={(e) => setSupplierUrl(e.target.value)}
-                      />
-
-                      <button
-                        onClick={scrapeProductInfo}
-                        disabled={isScrapingProduct}
-                        className="mb-4 w-full rounded-2xl bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] text-white px-5 py-4 font-semibold shadow-lg hover:scale-[1.01] transition-all disabled:opacity-50"
-                      >
-                        {isScrapingProduct
-                          ? "Importing Product Details..."
-                          : "✨ Import Product Details"}
-                      </button>
-
-                      {(productImageUrl ||
-                        productNumber ||
-                        supplierName ||
-                        scrapedDescription) && (
-                        <div className="border border-[#D9D2C3]/80 rounded-3xl p-5 mb-5 bg-white shadow-sm">
-                          <div className="flex gap-5 items-start">
-                            {productImageUrl && (
-                              <img
-                                src={productImageUrl}
-                                alt={itemName || "Scraped product"}
-                                className="w-28 h-28 rounded-2xl object-cover border"
-                              />
-                            )}
-
-                            <div className="flex-1">
-                              <p className="text-sm text-gray-500 mb-1">
-                                Product Preview
-                              </p>
-
-                              <h3 className="text-xl font-bold">
-                                {itemName || "Product details imported"}
-                              </h3>
-
-                              <p className="text-xs text-gray-400 mt-1">
-                                Review and adjust any details before saving.
-                              </p>
-
-                              {productNumber && (
-                                <p className="text-sm text-gray-500 mt-1">
-                                  Product #: {productNumber}
-                                </p>
-                              )}
-
-                              {supplierName && (
-                                <p className="text-sm text-gray-500">
-                                  Supplier: {supplierName}
-                                </p>
-                              )}
-
-                              {scrapedDescription && (
-                                <p className="text-sm text-gray-600 mt-3 line-clamp-3">
-                                  {scrapedDescription}
-                                </p>
-                              )}
-
-                              <p className="text-2xl font-bold mt-4">
-                                ${formatMoney(Number(estimatedCost || 0))}
-                              </p>
-
-                              {priceUnit !== "item" && (
-                                <div className="mt-3 text-sm text-gray-500">
-                                  <p>Price unit: {priceUnit}</p>
-
-                                  {pricePerSqm && (
-                                    <p>Price per sqm: ${pricePerSqm}</p>
-                                  )}
-
-                                  {pricePerBox && (
-                                    <p>Price per box: ${pricePerBox}</p>
-                                  )}
-
-                                  {boxCoverageSqm && (
-                                    <p>Box coverage: {boxCoverageSqm} sqm</p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mb-5 mt-6 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
-                        <p className="text-sm font-bold text-[#0F172A]">
-                          2. Item details
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Confirm the item name and quantity. If the item
-                          clearly matches an existing category, we will select
-                          it for you.
-                        </p>
-                      </div>
-
-                      <label className="mb-1 block text-sm font-semibold text-gray-700">
-                        Item name
-                      </label>
-                      <input
-                        className="border rounded-xl p-4 block w-full mb-4"
-                        placeholder="Item name"
-                        value={itemName}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setItemName(value);
-                          maybeAutoSelectCategory(value);
-                        }}
-                        onBlur={() => maybeAutoSelectCategory()}
-                      />
-                      <label className="mb-1 block text-sm font-semibold text-gray-700">
-                        Quantity
-                      </label>
-                      <input
-                        className="border rounded-xl p-4 block w-full mb-4"
-                        placeholder="Quantity"
-                        type="number"
-                        min="1"
-                        value={quantity}
-                        onChange={(e) => setQuantity(e.target.value)}
-                      />
-
-                      <div className="mb-5 mt-6 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
-                        <p className="text-sm font-bold text-[#0F172A]">
-                          3. Budget category
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Choose where this item should sit in your project
-                          budget. Select create new category if the right one is
-                          missing.
-                        </p>
-                      </div>
-
-                      <label className="mb-1 block text-sm font-semibold text-gray-700">
-                        Budget category
-                      </label>
-                      <select
-                        className="border rounded-xl p-4 block w-full mb-4"
-                        value={selectedCategory}
-                        onChange={(e) => {
-                          if (e.target.value === "__create_new__") {
-                            setShowQuickCategoryModal(true);
-                            setSelectedCategory("");
-                            return;
-                          }
-                          setSelectedCategory(e.target.value);
-                          setSelectedFeatureId("");
-                        }}
-                      >
-                        <option value="">Select category</option>
-                        {categories.map((category) => (
-                          <option key={category.id} value={category.id}>
-                            {category.name}
-                          </option>
-                        ))}
-                        <option value="__create_new__">
-                          + Create new category
-                        </option>
-                      </select>
-
-                      <label className="mb-1 block text-sm font-semibold text-gray-700">
-                        Feature optional
-                      </label>
-                      <select
-                        className="border rounded-xl p-4 block w-full mb-4"
-                        value={selectedFeatureName}
-                        onChange={(e) => {
-                          setSelectedFeatureName(e.target.value);
-                          setSelectedFeatureId("");
-                          if (e.target.value !== "Other") {
-                            setCustomBudgetFeatureName("");
-                          }
-                        }}
-                      >
-                        <option value="">Optional: select feature</option>
-                        {featureTypes.map((feature) => (
-                          <option key={feature} value={feature}>
-                            {feature}
-                          </option>
-                        ))}
-                      </select>
-
-                      {selectedFeatureName === "Other" && (
-                        <input
-                          className="border rounded-xl p-4 block w-full mb-4"
-                          value={customBudgetFeatureName}
-                          onChange={(e) =>
-                            setCustomBudgetFeatureName(e.target.value)
-                          }
-                          placeholder="Add custom feature name"
-                        />
-                      )}
-
-                      {isFlooringItem && (
-                        <div className="border border-[#D9D2C3]/80 rounded-2xl p-5 mb-5 bg-emerald-50">
-                          <div className="mb-4">
-                            <p className="font-semibold text-gray-900">
-                              Flooring quantity helper
-                            </p>
-                            <p className="mt-1 text-sm text-gray-600">
-                              Choose whether to enter the flooring quantity
-                              yourself or calculate it from selected rooms.
-                            </p>
-                          </div>
-
-                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                            <button
-                              type="button"
-                              onClick={() => setQuantityMethod("manual")}
-                              className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
-                                quantityMethod === "manual"
-                                  ? "border-[#0F172A] bg-[#0F172A] text-white"
-                                  : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
-                              }`}
-                            >
-                              Enter manually
-                              <span className="mt-1 block text-xs font-normal opacity-80">
-                                Use the normal quantity and sqm fields.
-                              </span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setQuantityMethod("rooms");
-                                setUseSqmPricing(true);
-                              }}
-                              className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition-all ${
-                                quantityMethod === "rooms"
-                                  ? "border-[#0F172A] bg-[#0F172A] text-white"
-                                  : "border-gray-200 bg-white text-gray-700 hover:border-gray-400"
-                              }`}
-                            >
-                              Calculate from rooms
-                              <span className="mt-1 block text-xs font-normal opacity-80">
-                                Use room sqm from the plans.
-                              </span>
-                            </button>
-                          </div>
-
-                          {quantityMethod === "rooms" && (
-                            <div className="mt-4 space-y-4 rounded-2xl border border-emerald-200 bg-white p-4">
-                              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                                <div>
-                                  <p className="text-sm font-semibold text-gray-900">
-                                    Select rooms for this flooring
-                                  </p>
-                                  <p className="mt-1 text-xs text-gray-500">
-                                    This uses the room sqm already saved from
-                                    the Plans tab.
-                                  </p>
-                                </div>
-
-                                <div className="w-full sm:w-36">
-                                  <label className="mb-1 block text-xs font-semibold text-gray-600">
-                                    Wastage %
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    className="w-full rounded-xl border p-3 text-sm"
-                                    value={flooringWastagePercent}
-                                    onChange={(e) =>
-                                      setFlooringWastagePercent(e.target.value)
-                                    }
-                                  />
-                                </div>
-                              </div>
-
-                              {planRooms.length === 0 ? (
-                                <div className="rounded-2xl border border-dashed p-4 text-sm text-gray-500">
-                                  No rooms have been added yet. Add rooms in the
-                                  Plans tab first, or keep using manual sqm
-                                  entry below.
-                                </div>
-                              ) : (
-                                <div className="grid gap-2 sm:grid-cols-2">
-                                  {planRooms
-                                    .slice()
-                                    .sort((a, b) =>
-                                      getTextValue(a.room_name).localeCompare(
-                                        getTextValue(b.room_name),
-                                      ),
-                                    )
-                                    .map((room) => {
-                                      const roomSqm = getDisplaySqm(room);
-                                      const checked =
-                                        selectedFlooringRoomIds.includes(
-                                          room.id,
-                                        );
-
-                                      return (
-                                        <label
-                                          key={room.id}
-                                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition-all ${
-                                            checked
-                                              ? "border-emerald-500 bg-emerald-50"
-                                              : "border-gray-200 bg-white hover:border-gray-300"
-                                          }`}
-                                        >
-                                          <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            onChange={() =>
-                                              toggleFlooringRoom(room.id)
-                                            }
-                                            className="mt-1"
-                                          />
-                                          <span>
-                                            <span className="block font-semibold text-gray-900">
-                                              {room.room_name || "Unnamed room"}
-                                            </span>
-                                            <span className="block text-xs text-gray-500">
-                                              {room.room_type || "Room"}
-                                              {room.floor_level
-                                                ? ` · ${room.floor_level}`
-                                                : ""}
-                                            </span>
-                                            <span className="mt-1 block text-xs font-semibold text-emerald-700">
-                                              {roomSqm > 0
-                                                ? `${roomSqm.toFixed(2)} sqm`
-                                                : "No sqm saved"}
-                                            </span>
-                                          </span>
-                                        </label>
-                                      );
-                                    })}
-                                </div>
-                              )}
-
-                              <div className="rounded-2xl bg-gray-950 p-5 text-white">
-                                <p className="text-sm opacity-70">
-                                  Recommended amount to order
-                                </p>
-                                <p className="mt-1 text-3xl font-bold">
-                                  {getFlooringRecommendedSqm().toFixed(1)} sqm
-                                </p>
-                                <p className="mt-2 text-xs opacity-80">
-                                  Selected rooms:{" "}
-                                  {getFlooringSelectedAreaSqm().toFixed(2)} sqm
-                                  {Number(flooringWastagePercent || 0) > 0
-                                    ? ` + ${Number(flooringWastagePercent || 0)}% wastage`
-                                    : ""}
-                                </p>
-
-                                {Number(boxCoverageSqm || 0) > 0 && (
-                                  <p className="mt-2 text-xs opacity-80">
-                                    Box coverage: {boxCoverageSqm} sqm/box ·
-                                    Recommended boxes:{" "}
-                                    {getFlooringRecommendedBoxes()}
-                                  </p>
-                                )}
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={useFlooringRecommendation}
-                                className="w-full rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-md hover:bg-emerald-700"
-                              >
-                                Use Recommended Quantity
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="mb-5 mt-6 rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
-                        <p className="text-sm font-bold text-[#0F172A]">
-                          4. Costing method
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Use a simple estimated cost, or switch on sqm pricing
-                          for flooring, tiles and other area-based selections.
-                        </p>
-                      </div>
-
-                      <div className="border border-[#D9D2C3]/80 rounded-2xl p-5 mb-5 bg-white">
-                        <label className="flex items-center gap-3 mb-5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={useSqmPricing}
-                            onChange={(e) => setUseSqmPricing(e.target.checked)}
-                          />
-
-                          <span className="font-medium">
-                            Calculate using sqm pricing
-                          </span>
-                        </label>
-
-                        {!useSqmPricing ? (
-                          <div>
-                            <label className="mb-1 block text-sm font-semibold text-gray-700">
-                              Estimated cost ($)
-                            </label>
-                            <input
-                              className="border rounded-xl p-4 block w-full"
-                              placeholder="Estimated cost"
-                              type="number"
-                              value={estimatedCost}
-                              onChange={(e) => setEstimatedCost(e.target.value)}
-                            />
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            <div>
-                              <label className="mb-1 block text-sm font-semibold text-gray-700">
-                                Area (sqm)
-                              </label>
-                              <input
-                                className="border rounded-xl p-4 block w-full"
-                                placeholder="sqm"
-                                type="number"
-                                value={sqm}
-                                onChange={(e) => setSqm(e.target.value)}
-                              />
-                            </div>
-
-                            <div>
-                              <label className="mb-1 block text-sm font-semibold text-gray-700">
-                                Cost per sqm ($)
-                              </label>
-                              <input
-                                className="border rounded-xl p-4 block w-full"
-                                placeholder="Cost per sqm"
-                                type="number"
-                                value={costPerSqm}
-                                onChange={(e) => setCostPerSqm(e.target.value)}
-                              />
-                            </div>
-
-                            <label className="flex items-center gap-3 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={includeWastage}
-                                onChange={(e) =>
-                                  setIncludeWastage(e.target.checked)
-                                }
-                              />
-
-                              <span>Add 10% wastage allowance</span>
-                            </label>
-
-                            <div className="bg-[#0F172A] text-white rounded-2xl p-5">
-                              <p className="text-sm opacity-70">
-                                Calculated Total
-                              </p>
-                              <p className="text-3xl font-bold">
-                                ${formatMoney(calculateSqmTotal())}
-                              </p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={createItem}
-                        className="bg-[#4F46E5] text-white rounded-xl px-5 py-3 w-full hover:bg-[#4338CA]"
-                      >
-                        {editingItemId ? "Save Selection" : "Add Selection"}
-                      </button>
-
-                      {editingItemId && (
-                        <button
-                          onClick={resetItemForm}
-                          className="mt-3 border border-gray-300 bg-white text-gray-700 rounded-xl px-5 py-3 w-full"
-                        >
-                          Cancel Edit
-                        </button>
-                      )}
-                    </div>
-                  </section>
+                    + Add Category
+                  </button>
                 </div>
 
-                <div className="lg:col-span-2 space-y-8">
-                  <section>
-                    <h2 className="text-3xl font-bold mb-6">
-                      Budget & Selections Categories
-                    </h2>
+                {visibleCategories.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[#D9D2C3]/80 bg-[#F8F6F1] p-8 text-center">
+                    <h4 className="text-xl font-bold text-[#0F172A]">No categories yet</h4>
+                    <p className="mt-2 text-sm text-slate-500">
+                      Add your first category to start organising products, allowances and selections.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickCategoryModal(true)}
+                      className="mt-5 rounded-2xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
+                    >
+                      Add Category
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {visibleCategories.map((category) => {
+                      const categoryItems = items
+                        .filter((item) => item.category_id === category.id)
+                        .sort((a, b) => String(a.item_name || "").localeCompare(String(b.item_name || "")));
 
-                    {visibleCategories.length === 0 ? (
-                      <div className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8 text-gray-500">
-                        No categories yet. Create your first category or add a
-                        selection item to get started.
-                      </div>
-                    ) : (
-                      <div className="space-y-6">
-                        {visibleCategories.map((category) => {
-                          const categoryItems = items.filter(
-                            (item) => item.category_id === category.id,
-                          );
+                      const categoryTotal = categoryItems.reduce(
+                        (sum, item) => sum + calculateItemTotal(item),
+                        0,
+                      );
 
-                          const categoryTotal = categoryItems.reduce(
-                            (sum, item) => sum + calculateItemTotal(item),
-                            0,
-                          );
+                      const categoryBudget = Number(category.budget_amount || 0);
+                      const categoryRemaining = categoryBudget - categoryTotal;
+                      const categorySpendPercent = categoryBudget > 0
+                        ? Math.min(Math.round((categoryTotal / categoryBudget) * 100), 100)
+                        : 0;
+                      const isExpanded = expandedBudgetCategoryId === category.id;
+                      const isOverBudget = categoryBudget > 0 && categoryTotal > categoryBudget;
 
-                          const categoryBudget = Number(
-                            category.budget_amount || 0,
-                          );
-                          const categoryRemaining =
-                            categoryBudget - categoryTotal;
+                      return (
+                        <div
+                          key={category.id}
+                          className="rounded-2xl border border-[#D9D2C3]/60 bg-white shadow-sm transition hover:shadow-md"
+                        >
+                          <div className="p-5">
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedBudgetCategoryId(isExpanded ? null : category.id)
+                                }
+                                className="flex min-w-0 flex-1 items-start gap-4 text-left"
+                              >
+                                <span className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#D9D2C3]/70 bg-[#F8F6F1] text-lg font-semibold text-[#0F172A]">
+                                  {isExpanded ? "−" : "+"}
+                                </span>
 
-                          return (
-                            <div
-                              key={category.id}
-                              className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-6"
-                            >
-                              <div className="flex justify-between items-center mb-5 gap-4 flex-wrap">
-                                <div>
-                                  <h3 className="text-2xl font-bold">
+                                <span className="min-w-0">
+                                  <span className="block text-xl font-bold text-[#0F172A]">
                                     {category.name}
-                                  </h3>
+                                  </span>
+                                  <span className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+                                    <span>Budget <strong className="text-[#0F172A]">${formatMoney(categoryBudget)}</strong></span>
+                                    <span>Spent <strong className="text-[#0F172A]">${formatMoney(categoryTotal)}</strong></span>
+                                    <span>{categoryItems.length} item{categoryItems.length === 1 ? "" : "s"}</span>
+                                  </span>
+                                </span>
+                              </button>
+
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:justify-end">
+                                <div className="text-left sm:text-right">
+                                  <p className={`text-sm font-semibold ${isOverBudget ? "text-red-600" : "text-slate-600"}`}>
+                                    ${formatMoney(Math.abs(categoryRemaining))} {categoryRemaining < 0 ? "over" : "remaining"}
+                                  </p>
+                                  {categoryBudget > 0 && (
+                                    <p className="mt-1 text-xs text-slate-400">
+                                      {categorySpendPercent}% spent
+                                    </p>
+                                  )}
                                 </div>
 
-                                <div className="flex gap-4 flex-wrap">
-                                  <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-[#F2EEE6]">
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      resetItemForm();
+                                      setSelectedCategory(category.id);
+                                      setExpandedBudgetCategoryId(category.id);
+                                      setShowItemModal(true);
+                                    }}
+                                    className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
+                                  >
+                                    + Add Item
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedBudgetCategoryId(isExpanded ? null : category.id)
+                                    }
+                                    className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-[#F8F6F1]"
+                                  >
+                                    {isExpanded ? "Hide Items" : "View Items"}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-5 h-2 overflow-hidden rounded-full bg-slate-100">
+                              <div
+                                className={`h-full rounded-full ${isOverBudget ? "bg-red-500" : "bg-[#2E7D6B]"}`}
+                                style={{ width: `${categoryBudget > 0 ? categorySpendPercent : 0}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                            <div className="border-t border-[#D9D2C3]/60 bg-[#FCFBF8] p-5">
+                              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                <div className="flex flex-wrap gap-3">
+                                  <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white px-4 py-3">
                                     <label
-                                      className="text-xs uppercase text-gray-500"
+                                      className="text-xs font-semibold text-slate-500"
                                       htmlFor={`category-budget-${category.id}`}
                                     >
-                                      Budget
+                                      Category budget
                                     </label>
                                     <div className="mt-1 flex items-center gap-2">
-                                      <span className="text-xl font-bold text-[#0F172A]">
-                                        $
-                                      </span>
+                                      <span className="font-bold text-[#0F172A]">$</span>
                                       <input
                                         id={`category-budget-${category.id}`}
-                                        className="w-32 rounded-xl border border-[#D9D2C3] bg-white px-3 py-2 text-xl font-bold text-[#0F172A] shadow-sm focus:border-[#4F46E5] focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/20"
+                                        className="w-32 rounded-xl border border-[#D9D2C3] bg-white px-3 py-2 font-bold text-[#0F172A] shadow-sm focus:border-[#4F46E5] focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/20"
                                         type="number"
                                         min="0"
                                         value={
@@ -5916,29 +5607,20 @@ export default function ProjectPage() {
                                             ? editCategoryBudget
                                             : String(categoryBudget || "")
                                         }
-                                        onFocus={() =>
-                                          startEditCategoryBudget(category)
-                                        }
+                                        onFocus={() => startEditCategoryBudget(category)}
                                         onChange={(e) => {
-                                          if (
-                                            editingCategoryId !== category.id
-                                          ) {
+                                          if (editingCategoryId !== category.id) {
                                             setEditingCategoryId(category.id);
                                           }
                                           setEditCategoryBudget(e.target.value);
                                         }}
                                         onBlur={() => {
-                                          if (
-                                            editingCategoryId === category.id
-                                          ) {
+                                          if (editingCategoryId === category.id) {
                                             saveCategoryBudget(category.id);
                                           }
                                         }}
                                         onKeyDown={(e) => {
-                                          if (e.key === "Enter") {
-                                            e.currentTarget.blur();
-                                          }
-
+                                          if (e.key === "Enter") e.currentTarget.blur();
                                           if (e.key === "Escape") {
                                             setEditingCategoryId(null);
                                             setEditCategoryBudget("");
@@ -5948,166 +5630,154 @@ export default function ProjectPage() {
                                       />
                                     </div>
                                   </div>
+                                </div>
 
-                                  <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-[#0F172A] text-white">
-                                    <p className="text-xs uppercase opacity-70">
-                                      Actual
-                                    </p>
-                                    <p className="text-xl font-bold">
-                                      ${formatMoney(categoryTotal)}
-                                    </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    resetItemForm();
+                                    setSelectedCategory(category.id);
+                                    setShowItemModal(true);
+                                  }}
+                                  className="rounded-2xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
+                                >
+                                  + Add Item to {category.name}
+                                </button>
+                              </div>
+
+                              {categoryItems.length === 0 ? (
+                                <div className="rounded-2xl border border-dashed border-[#D9D2C3]/80 bg-white p-6 text-center">
+                                  <p className="font-semibold text-[#0F172A]">No items in this category yet</p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    Add an item when you have a product, allowance or selection to track.
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      resetItemForm();
+                                      setSelectedCategory(category.id);
+                                      setShowItemModal(true);
+                                    }}
+                                    className="mt-4 rounded-2xl border border-[#4F46E5]/20 bg-white px-5 py-3 text-sm font-semibold text-[#4F46E5] shadow-sm transition hover:bg-[#F8F7FF]"
+                                  >
+                                    + Add Item
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="overflow-hidden rounded-2xl border border-[#D9D2C3]/60 bg-white">
+                                  <div className="hidden grid-cols-[1fr_120px_130px_120px] gap-4 border-b border-[#D9D2C3]/60 bg-[#F8F6F1] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
+                                    <span>Item</span>
+                                    <span>Status</span>
+                                    <span className="text-right">Total</span>
+                                    <span className="text-right">Actions</span>
                                   </div>
 
-                                  <div className="border border-[#D9D2C3]/80 rounded-2xl px-5 py-3 bg-white">
-                                    <p className="text-xs uppercase text-gray-500">
-                                      Remaining
-                                    </p>
-                                    <p
-                                      className={`text-xl font-bold ${
-                                        categoryRemaining < 0
-                                          ? "text-red-600"
-                                          : "text-green-600"
-                                      }`}
-                                    >
-                                      ${formatMoney(categoryRemaining)}
-                                    </p>
+                                  <div className="divide-y divide-[#D9D2C3]/50">
+                                    {categoryItems.map((item) => (
+                                      <div
+                                        key={item.id}
+                                        className="grid gap-3 px-4 py-4 md:grid-cols-[1fr_120px_130px_120px] md:items-center md:gap-4"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-[#0F172A]">
+                                            {item.item_name}
+                                          </p>
+                                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                                            <span>Qty {Number(item.quantity || 1)}</span>
+                                            {item.supplier_name && <span>{item.supplier_name}</span>}
+                                            {item.product_number && <span>#{item.product_number}</span>}
+                                            {item.use_sqm_pricing && item.sqm && (
+                                              <span>{item.sqm} sqm</span>
+                                            )}
+                                            {item.supplier_url && (
+                                              <a
+                                                href={item.supplier_url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="font-semibold text-[#4F46E5] hover:underline"
+                                              >
+                                                View supplier →
+                                              </a>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        <div>
+                                          <select
+                                            value={item.product_status || "Planned"}
+                                            onChange={async (e) => {
+                                              const { error } = await supabase
+                                                .from("project_items")
+                                                .update({ product_status: e.target.value })
+                                                .eq("id", item.id);
+
+                                              if (error) {
+                                                showNotice(error.message);
+                                                return;
+                                              }
+
+                                              loadItems();
+                                            }}
+                                            className="w-full rounded-full border border-[#D9D2C3]/70 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+                                          >
+                                            {productStatuses.map((status) => (
+                                              <option key={status} value={status}>
+                                                {status}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        <p className="text-left text-lg font-bold text-[#0F172A] md:text-right">
+                                          ${formatMoney(calculateItemTotal(item))}
+                                        </p>
+
+                                        <div className="flex gap-2 md:justify-end">
+                                          <button
+                                            type="button"
+                                            onClick={() => startEditItem(item)}
+                                            className="rounded-full border border-[#D9D2C3]/80 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-[#4F46E5]/30 hover:bg-[#F8F7FF] hover:text-[#4F46E5]"
+                                          >
+                                            Edit
+                                          </button>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => deleteItem(item.id)}
+                                            className="rounded-full border border-red-200 bg-white px-3.5 py-2 text-sm font-semibold text-red-600 shadow-sm transition hover:bg-red-50"
+                                          >
+                                            Delete
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
                                   </div>
                                 </div>
-                              </div>
-
-                              <div className="space-y-4">
-                                {categoryItems.map((item) => (
-                                  <div
-                                    key={item.id}
-                                    className="group border border-[#D9D2C3]/80 rounded-3xl p-5 flex justify-between items-start bg-white hover:shadow-xl hover:-translate-y-0.5 transition-all duration-300"
-                                  >
-                                    <div>
-                                      <h4 className="text-xl font-semibold mb-2">
-                                        {item.item_name}
-                                      </h4>
-                                      <p className="text-sm text-gray-500 mb-2">
-                                        Quantity: {Number(item.quantity || 1)}
-                                      </p>
-
-                                      {item.feature_id && (
-                                        <p className="text-xs text-purple-700 font-medium mb-2">
-                                          Feature:{" "}
-                                          {planFeatures.find(
-                                            (feature) =>
-                                              feature.id === item.feature_id,
-                                          )?.feature_name ||
-                                            planFeatures.find(
-                                              (feature) =>
-                                                feature.id === item.feature_id,
-                                            )?.feature_type ||
-                                            "Linked feature"}
-                                        </p>
-                                      )}
-
-                                      <div className="mb-3">
-                                        <select
-                                          value={
-                                            item.product_status || "Planned"
-                                          }
-                                          onChange={async (e) => {
-                                            const { error } = await supabase
-                                              .from("project_items")
-                                              .update({
-                                                product_status: e.target.value,
-                                              })
-                                              .eq("id", item.id);
-
-                                            if (error) {
-                                              showNotice(error.message);
-                                              return;
-                                            }
-
-                                            loadItems();
-                                          }}
-                                          className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold"
-                                        >
-                                          {productStatuses.map((status) => (
-                                            <option key={status} value={status}>
-                                              {status}
-                                            </option>
-                                          ))}
-                                        </select>
-                                      </div>
-
-                                      {item.use_sqm_pricing && (
-                                        <div className="text-sm text-gray-500 mb-3">
-                                          {item.sqm} sqm × $
-                                          {Number(
-                                            item.cost_per_sqm || 0,
-                                          ).toLocaleString()}
-                                          /sqm
-                                          {item.include_wastage && (
-                                            <span className="ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-xs">
-                                              +10% wastage
-                                            </span>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {item.supplier_url && (
-                                        <a
-                                          href={item.supplier_url}
-                                          target="_blank"
-                                          className="text-blue-600 underline inline-block"
-                                        >
-                                          View Supplier
-                                        </a>
-                                      )}
-                                    </div>
-
-                                    <div className="text-right">
-                                      <p className="text-2xl font-bold mb-4">
-                                        ${formatMoney(calculateItemTotal(item))}
-                                      </p>
-
-                                      <div className="flex gap-3 justify-end opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-300">
-                                        <button
-                                          onClick={() => startEditItem(item)}
-                                          className="bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"
-                                        >
-                                          ✨ Edit
-                                        </button>
-
-                                        <button
-                                          onClick={() => deleteItem(item.id)}
-                                          className="bg-gradient-to-r from-red-500 to-pink-600 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"
-                                        >
-                                          Delete
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                              )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-                </div>
-              </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             </div>
           )}
 
           {activeTab === "estimate" && (
             <div className="space-y-8">
-              <section className="print-report overflow-hidden rounded-3xl border border-[#D9D2C3]/80 bg-white shadow-sm">
-                <div className="print-card bg-gradient-to-r from-[#0F172A] to-[#1E293B] px-8 py-8 text-white">
+              <section className="print-report overflow-hidden rounded-2xl border border-[#D9D2C3]/60 bg-white shadow-sm">
+                <div className="print-card bg-white border-b border-[#D9D2C3]/60 px-8 py-8 text-[#0F172A]">
                   <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
                     <div className="max-w-3xl">
-                      <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+                      <p className="text-sm font-semibold uppercase tracking-wide text-[#4F46E5]">
                         Cost Forecast
                       </p>
                       <h2 className="mt-2 text-4xl font-bold tracking-tight">
                         Understand where your project is heading
                       </h2>
-                      <p className="mt-3 text-base leading-7 text-white/70">
+                      <p className="mt-3 text-base leading-7 text-slate-600">
                         Generate a clear planning forecast using your project
                         details, rooms, features and saved selections. Use it to
                         check whether the project is sitting where you expected
@@ -6119,7 +5789,7 @@ export default function ProjectPage() {
                       <button
                         onClick={generateEstimate}
                         disabled={isGeneratingEstimate}
-                        className="rounded-2xl bg-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-lg transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-xl disabled:opacity-50 disabled:hover:translate-y-0"
+                        className="rounded-2xl bg-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md disabled:opacity-50 disabled:hover:translate-y-0"
                       >
                         {isGeneratingEstimate
                           ? "Preparing Forecast..."
@@ -6133,7 +5803,7 @@ export default function ProjectPage() {
                           <button
                             type="button"
                             onClick={printCostForecast}
-                            className="rounded-2xl border border-white/20 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F2EEE6]"
+                            className="rounded-2xl border border-[#D9D2C3]/60 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F8F6F1]"
                           >
                             Print Report
                           </button>
@@ -6141,7 +5811,7 @@ export default function ProjectPage() {
                           <button
                             type="button"
                             onClick={exportCostForecastCsv}
-                            className="rounded-2xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-white/15"
+                            className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F7FF] px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F8F7FF]"
                           >
                             Export CSV
                           </button>
@@ -6154,7 +5824,7 @@ export default function ProjectPage() {
                             ? "bg-[#2E7D6B]/20 text-emerald-100"
                             : estimateStatus === "outdated"
                               ? "bg-amber-400/20 text-amber-100"
-                              : "bg-white/10 text-white/80"
+                              : "bg-[#F8F7FF] text-slate-600"
                         }`}
                       >
                         {estimateStatus === "current"
@@ -6169,8 +5839,8 @@ export default function ProjectPage() {
 
                 {!latestEstimate ? (
                   <div className="p-8">
-                    <div className="rounded-3xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-10 text-center">
-                      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-3xl shadow-sm">
+                    <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F8F6F1] p-10 text-center">
+                      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-3xl shadow-sm">
                         📊
                       </div>
                       <h3 className="text-2xl font-bold text-[#0F172A]">
@@ -6184,7 +5854,7 @@ export default function ProjectPage() {
                       <button
                         onClick={generateEstimate}
                         disabled={isGeneratingEstimate}
-                        className="mt-6 rounded-2xl bg-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-lg disabled:opacity-50 disabled:hover:translate-y-0"
+                        className="mt-6 rounded-2xl bg-[#4F46E5] px-6 py-4 text-sm font-semibold text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md disabled:opacity-50 disabled:hover:translate-y-0"
                       >
                         {isGeneratingEstimate
                           ? "Preparing Forecast..."
@@ -6210,25 +5880,25 @@ export default function ProjectPage() {
                     </div>
 
                     <div className="print-card grid gap-5 lg:grid-cols-3">
-                      <div className="rounded-3xl border-2 border-[#0F172A] bg-[#0F172A] p-7 text-white shadow-lg lg:col-span-2">
+                      <div className="rounded-2xl border-2 border-[#0F172A] bg-[#0F172A] p-7 text-[#0F172A] shadow-md lg:col-span-2">
                         <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-white/60">
+                            <p className="text-sm font-semibold text-[#4F46E5]">
                               Likely Project Cost
                             </p>
                             <p className="mt-2 text-5xl font-bold tracking-tight">
                               ${formatMoney(likelyEstimateTotal)}
                             </p>
-                            <p className="mt-4 max-w-2xl text-sm leading-6 text-white/75">
+                            <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-600">
                               Based on your current rooms, features and saved
                               selections, this is the practical midpoint for
                               planning conversations.
                             </p>
                           </div>
 
-                          <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm text-white/80">
+                          <div className="rounded-2xl bg-[#F8F7FF] px-4 py-3 text-sm text-slate-600">
                             Last generated
-                            <span className="mt-1 block font-semibold text-white">
+                            <span className="mt-1 block font-semibold text-[#0F172A]">
                               {latestEstimate.created_at
                                 ? new Date(
                                     latestEstimate.created_at,
@@ -6239,7 +5909,7 @@ export default function ProjectPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-7 shadow-sm">
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-7 shadow-sm">
                         <p className="text-sm font-semibold text-emerald-700">
                           Expected Planning Range
                         </p>
@@ -6254,7 +5924,7 @@ export default function ProjectPage() {
                       </div>
                     </div>
 
-                    <section className="print-card rounded-3xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-6">
+                    <section className="print-card rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-6">
                       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr] lg:items-center">
                         <div>
                           <p className="text-sm font-semibold text-[#2E7D6B]">
@@ -6273,7 +5943,7 @@ export default function ProjectPage() {
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Bedrooms
                             </p>
@@ -6281,7 +5951,7 @@ export default function ProjectPage() {
                               {buildSummary.bedroomCount}
                             </p>
                           </div>
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Bathrooms
                             </p>
@@ -6289,7 +5959,7 @@ export default function ProjectPage() {
                               {buildSummary.bathroomCount}
                             </p>
                           </div>
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Rooms
                             </p>
@@ -6297,7 +5967,7 @@ export default function ProjectPage() {
                               {buildSummary.roomCount}
                             </p>
                           </div>
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-white p-4 text-center">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Area
                             </p>
@@ -6310,7 +5980,7 @@ export default function ProjectPage() {
                     </section>
 
                     <section className="print-card grid gap-4 md:grid-cols-4">
-                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <p className="text-sm font-semibold text-slate-500">
                           Building Works
                         </p>
@@ -6323,7 +5993,7 @@ export default function ProjectPage() {
                         </p>
                       </div>
 
-                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <p className="text-sm font-semibold text-slate-500">
                           Site & Project Costs
                         </p>
@@ -6337,7 +6007,7 @@ export default function ProjectPage() {
                         </p>
                       </div>
 
-                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <p className="text-sm font-semibold text-slate-500">
                           Known Selections
                         </p>
@@ -6349,7 +6019,7 @@ export default function ProjectPage() {
                         </p>
                       </div>
 
-                      <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
                         <p className="text-sm font-semibold text-amber-800">
                           Contingency
                         </p>
@@ -6364,7 +6034,7 @@ export default function ProjectPage() {
                     </section>
 
                     <section className="grid gap-6 lg:grid-cols-2">
-                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <h3 className="text-2xl font-bold text-[#0F172A]">
                           What is driving the cost
                         </h3>
@@ -6375,7 +6045,7 @@ export default function ProjectPage() {
 
                         <div className="mt-5 space-y-3">
                           {buildSummary.totalSqm > 0 && (
-                            <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700">
+                            <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4 text-sm text-slate-700">
                               <span className="font-semibold text-[#0F172A]">
                                 Overall floor area:
                               </span>{" "}
@@ -6385,7 +6055,7 @@ export default function ProjectPage() {
                           )}
 
                           {buildSummary.bathroomCount > 1 && (
-                            <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700">
+                            <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4 text-sm text-slate-700">
                               <span className="font-semibold text-[#0F172A]">
                                 Multiple wet areas:
                               </span>{" "}
@@ -6397,7 +6067,7 @@ export default function ProjectPage() {
                           {buildSummary.featureHighlights.map((item) => (
                             <div
                               key={item}
-                              className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700"
+                              className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4 text-sm text-slate-700"
                             >
                               <span className="font-semibold text-[#0F172A]">
                                 {item.charAt(0).toUpperCase() + item.slice(1)}:
@@ -6409,7 +6079,7 @@ export default function ProjectPage() {
                           {buildSummary.featureHighlights.length === 0 &&
                             buildSummary.totalSqm === 0 &&
                             buildSummary.bathroomCount <= 1 && (
-                              <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F2EEE6] p-4 text-sm text-slate-600">
+                              <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-[#F8F6F1] p-4 text-sm text-slate-600">
                                 Add rooms, features and selections to reveal the
                                 main cost drivers.
                               </div>
@@ -6417,7 +6087,7 @@ export default function ProjectPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <h3 className="text-2xl font-bold text-[#0F172A]">
                           Improve this forecast
                         </h3>
@@ -6467,7 +6137,7 @@ export default function ProjectPage() {
                             <button
                               type="button"
                               onClick={() => setActiveTab("budget")}
-                              className="w-full rounded-2xl border border-[#D9D2C3] bg-[#F2EEE6] p-4 text-left text-sm text-slate-700 transition hover:bg-white"
+                              className="w-full rounded-2xl border border-[#D9D2C3] bg-[#F8F6F1] p-4 text-left text-sm text-slate-700 transition hover:bg-white"
                             >
                               <span className="font-semibold text-[#0F172A]">
                                 Add known selections
@@ -6505,7 +6175,7 @@ export default function ProjectPage() {
                     </section>
 
                     {projectCostAdditions?.rates && (
-                      <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div>
                             <h3 className="text-2xl font-bold text-[#0F172A]">
@@ -6520,7 +6190,7 @@ export default function ProjectPage() {
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-4">
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Builder & Project Overhead
                             </p>
@@ -6535,7 +6205,7 @@ export default function ProjectPage() {
                               )}
                             </p>
                           </div>
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Preliminaries
                             </p>
@@ -6552,7 +6222,7 @@ export default function ProjectPage() {
                               )}
                             </p>
                           </div>
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Q Leave Levy
                             </p>
@@ -6567,7 +6237,7 @@ export default function ProjectPage() {
                               )}
                             </p>
                           </div>
-                          <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4">
                             <p className="text-xs font-semibold uppercase text-slate-500">
                               Warranty / Statutory
                             </p>
@@ -6587,7 +6257,7 @@ export default function ProjectPage() {
                     )}
 
                     {latestEstimateConfidence && (
-                      <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                      <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                           <div>
                             <h3 className="text-2xl font-bold text-[#0F172A]">
@@ -6599,12 +6269,12 @@ export default function ProjectPage() {
                             </p>
                           </div>
 
-                          <div className="rounded-3xl bg-[#0F172A] px-6 py-5 text-right text-white">
-                            <p className="text-sm text-white/60">Readiness</p>
+                          <div className="rounded-2xl bg-[#0F172A] px-6 py-5 text-right text-[#0F172A]">
+                            <p className="text-sm text-[#4F46E5]">Readiness</p>
                             <p className="mt-1 text-4xl font-bold">
                               {latestEstimateConfidence.score}/100
                             </p>
-                            <p className="text-sm text-white/75">
+                            <p className="text-sm text-slate-600">
                               {latestEstimateConfidence.label}
                             </p>
                           </div>
@@ -6616,7 +6286,7 @@ export default function ProjectPage() {
                               (reason: string, index: number) => (
                                 <div
                                   key={index}
-                                  className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4 text-sm text-slate-700"
+                                  className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4 text-sm text-slate-700"
                                 >
                                   {reason}
                                 </div>
@@ -6627,7 +6297,7 @@ export default function ProjectPage() {
                       </section>
                     )}
 
-                    <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-6 shadow-sm">
+                    <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                       <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                         <div>
                           <h3 className="text-2xl font-bold text-[#0F172A]">
@@ -6654,7 +6324,7 @@ export default function ProjectPage() {
                             groupedEstimateRooms.map((group) => (
                               <div
                                 key={group.name}
-                                className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4"
+                                className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4"
                               >
                                 <div className="mb-3 flex items-start justify-between gap-3">
                                   <div>
@@ -6738,7 +6408,7 @@ export default function ProjectPage() {
                                   return (
                                     <div
                                       key={feature.id}
-                                      className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6] p-4"
+                                      className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4"
                                     >
                                       <div className="flex justify-between gap-3">
                                         <div>
@@ -6782,7 +6452,7 @@ export default function ProjectPage() {
 
           {activeTab === "overview" && (
             <div className="space-y-8">
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                 <h2 className="text-3xl font-bold mb-3">Project Overview</h2>
                 <p className="text-gray-500">
                   Capture the project information that changes the estimate.
@@ -6795,26 +6465,26 @@ export default function ProjectPage() {
                 className={
                   isEditingProject
                     ? "fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4"
-                    : "overflow-hidden rounded-3xl border bg-white shadow-sm"
+                    : "overflow-hidden rounded-2xl border bg-white shadow-sm"
                 }
               >
                 <div
                   className={
                     isEditingProject
-                      ? "max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl border bg-white shadow-2xl"
+                      ? "max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border bg-white shadow-xl"
                       : ""
                   }
                 >
-                  <div className="border-b bg-gradient-to-r from-gray-950 to-gray-800 px-8 py-7 text-white">
+                  <div className="border-b border-[#D9D2C3]/60 bg-white px-8 py-7">
                     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                       <div>
-                        <p className="text-sm font-semibold uppercase tracking-wide text-white/60">
+                        <p className="text-sm font-semibold uppercase tracking-wide text-[#4F46E5]">
                           Overview information
                         </p>
-                        <h2 className="mt-1 text-3xl font-bold">
+                        <h2 className="mt-1 text-3xl font-bold text-[#0F172A]">
                           Project Details
                         </h2>
-                        <p className="mt-2 max-w-3xl text-sm text-white/70">
+                        <p className="mt-2 max-w-3xl text-sm text-slate-600">
                           Location, budget split and project information used
                           for your estimate. Postcode helps keep the costing
                           location-aware without needing the full address.
@@ -6833,7 +6503,7 @@ export default function ProjectPage() {
                   {!isEditingProject ? (
                     <div className="space-y-6 p-8">
                       <div className="grid gap-4 lg:grid-cols-3">
-                        <div className="rounded-3xl border bg-[#F2EEE6] p-5">
+                        <div className="rounded-2xl border bg-[#F8F6F1] p-5">
                           <p className="text-xs font-semibold uppercase text-gray-500">
                             Project Type
                           </p>
@@ -6845,26 +6515,24 @@ export default function ProjectPage() {
                           </p>
                         </div>
 
-                        <div className="rounded-3xl border bg-[#F2EEE6] p-5">
+                        <div className="rounded-2xl border bg-[#F8F6F1] p-5">
                           <p className="text-xs font-semibold uppercase text-gray-500">
                             Location
                           </p>
                           <p className="mt-2 text-xl font-bold text-gray-950">
-                            {[project.suburb, project.state, project.postcode]
-                              .filter(Boolean)
-                              .join(" ") || "Not set"}
+                            {projectLocation || "Not set"}
                           </p>
                           <p className="mt-1 text-sm text-gray-500">
                             {project.address || "Address optional"}
                           </p>
                         </div>
 
-                        <div className="rounded-3xl border bg-[#F2EEE6] p-5">
+                        <div className={`rounded-2xl border p-5 ${stageMeta.softBg} ${stageMeta.border}`}>
                           <p className="text-xs font-semibold uppercase text-gray-500">
-                            Project Stage
+                            Current Stage
                           </p>
-                          <p className="mt-2 text-xl font-bold text-gray-950">
-                            {project.project_stage || "Not set"}
+                          <p className={`mt-2 text-xl font-bold ${stageMeta.text}`}>
+                            {stageMeta.label}
                           </p>
                           <p className="mt-1 text-sm text-gray-500">
                             Expected start:{" "}
@@ -6873,7 +6541,7 @@ export default function ProjectPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-3xl border bg-[#F2EEE6] p-6">
+                      <div className="rounded-2xl border bg-[#F8F6F1] p-6">
                         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                           <div>
                             <p className="text-xs font-semibold uppercase text-gray-500">
@@ -6934,7 +6602,7 @@ export default function ProjectPage() {
                       </div>
 
                       {project.notes && (
-                        <div className="rounded-3xl border bg-white p-5">
+                        <div className="rounded-2xl border bg-white p-5">
                           <p className="text-xs font-semibold uppercase text-gray-500">
                             Notes
                           </p>
@@ -7057,7 +6725,7 @@ export default function ProjectPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-3xl border bg-[#F2EEE6] p-6">
+                      <div className="rounded-2xl border bg-[#F8F6F1] p-6">
                         <div className="mb-5">
                           <h3 className="text-xl font-bold">Budget Split</h3>
                           <p className="mt-1 text-sm text-gray-500">
@@ -7163,7 +6831,7 @@ export default function ProjectPage() {
                       <div className="flex flex-col gap-3 sm:flex-row">
                         <button
                           onClick={saveProjectDetails}
-                          className="rounded-xl bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg"
+                          className="rounded-xl bg-[#0F172A] px-6 py-3 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md"
                         >
                           Save Project Details
                         </button>
@@ -7180,7 +6848,7 @@ export default function ProjectPage() {
               </section>
 
               {latestEstimate && (
-                <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+                <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                   <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
                     <div>
                       <p className="text-sm font-semibold text-gray-500 mb-2">
@@ -7199,7 +6867,7 @@ export default function ProjectPage() {
                       </p>
                     </div>
 
-                    <div className="rounded-3xl bg-[#0F172A] px-6 py-5 text-white text-right min-w-60">
+                    <div className="rounded-2xl bg-[#0F172A] px-6 py-5 text-[#0F172A] text-right min-w-60">
                       <p className="text-sm opacity-70">Likely Total</p>
                       <p className="text-3xl font-bold mt-1">
                         ${formatMoney(likelyEstimateTotal)}
@@ -7212,25 +6880,25 @@ export default function ProjectPage() {
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6">
-                    <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] border px-4 py-3 text-center">
                       <p className="text-xs text-gray-500">Bedrooms</p>
                       <p className="text-2xl font-bold">
                         {buildSummary.bedroomCount}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] border px-4 py-3 text-center">
                       <p className="text-xs text-gray-500">Bathrooms</p>
                       <p className="text-2xl font-bold">
                         {buildSummary.bathroomCount}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] border px-4 py-3 text-center">
                       <p className="text-xs text-gray-500">Features</p>
                       <p className="text-2xl font-bold">
                         {buildSummary.featureCount}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#F2EEE6] border px-4 py-3 text-center">
+                    <div className="rounded-2xl bg-[#F8F6F1] border px-4 py-3 text-center">
                       <p className="text-xs text-gray-500">
                         Measured/Assumed Area
                       </p>
@@ -7265,7 +6933,7 @@ export default function ProjectPage() {
                 </section>
               )}
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
                   <div>
                     <h3 className="text-2xl font-bold mb-2">
@@ -7280,7 +6948,7 @@ export default function ProjectPage() {
 
                   <button
                     onClick={saveCostProfile}
-                    className="rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all"
+                    className="rounded-xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-md transition-all"
                   >
                     Save Cost Profile
                   </button>
@@ -7431,7 +7099,7 @@ export default function ProjectPage() {
 
           {activeTab === "products" && (
             <div className="space-y-8">
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5 mb-6">
                   <div>
                     <h2 className="text-3xl font-bold mb-3">
@@ -7459,21 +7127,21 @@ export default function ProjectPage() {
                 </div>
 
                 <div className="grid md:grid-cols-4 gap-4 mb-8">
-                  <div className="rounded-2xl border bg-[#F2EEE6] p-5">
+                  <div className="rounded-2xl border bg-[#F8F6F1] p-5">
                     <p className="text-sm text-gray-500">Supplier Total</p>
                     <p className="text-3xl font-bold mt-1">
                       ${formatMoney(supplierGrandTotal)}
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border bg-[#F2EEE6] p-5">
+                  <div className="rounded-2xl border bg-[#F8F6F1] p-5">
                     <p className="text-sm text-gray-500">Products</p>
                     <p className="text-3xl font-bold mt-1">
                       {supplierItemCount}
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border bg-[#F2EEE6] p-5">
+                  <div className="rounded-2xl border bg-[#F8F6F1] p-5">
                     <p className="text-sm text-gray-500">Suppliers</p>
                     <p className="text-3xl font-bold mt-1">
                       {supplierSummaries.length}
@@ -7498,7 +7166,7 @@ export default function ProjectPage() {
                     {supplierSummaries.map((group: any) => (
                       <div
                         key={group.supplier}
-                        className="border border-[#D9D2C3]/80 rounded-2xl p-5 bg-white shadow-sm"
+                        className="border border-[#D9D2C3]/60 rounded-2xl p-5 bg-white shadow-sm"
                       >
                         <div className="flex justify-between gap-4 items-start mb-4">
                           <div>
@@ -7511,7 +7179,7 @@ export default function ProjectPage() {
                             </p>
                           </div>
 
-                          <div className="rounded-2xl bg-[#0F172A] px-5 py-3 text-white text-right">
+                          <div className="rounded-2xl bg-[#0F172A] px-5 py-3 text-[#0F172A] text-right">
                             <p className="text-xs opacity-70">Supplier Total</p>
                             <p className="text-xl font-bold">
                               ${formatMoney(group.total)}
@@ -7523,7 +7191,7 @@ export default function ProjectPage() {
                           {group.items.map((item: any) => (
                             <div
                               key={item.id}
-                              className="flex justify-between gap-4 rounded-2xl border bg-[#F2EEE6] p-4"
+                              className="flex justify-between gap-4 rounded-2xl border bg-[#F8F6F1] p-4"
                             >
                               <div>
                                 <div className="flex items-start justify-between gap-3">
@@ -7593,7 +7261,7 @@ export default function ProjectPage() {
                 )}
               </section>
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                 <h2 className="text-2xl font-bold mb-3">
                   Upload Product Photos, Ideas & Inspiration
                 </h2>
@@ -7617,7 +7285,7 @@ export default function ProjectPage() {
                 </button>
               </section>
 
-              <section className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+              <section className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
                 <h2 className="text-3xl font-bold mb-6">
                   Product Photos & Inspiration Files
                 </h2>
@@ -7631,7 +7299,7 @@ export default function ProjectPage() {
                     {files.map((file) => (
                       <div
                         key={file.id}
-                        className="border border-[#D9D2C3]/80 rounded-2xl overflow-hidden bg-white"
+                        className="border border-[#D9D2C3]/60 rounded-2xl overflow-hidden bg-white"
                       >
                         {file.file_type?.startsWith("image/") ? (
                           <img
@@ -7653,7 +7321,7 @@ export default function ProjectPage() {
                           <div className="flex gap-3 text-sm">
                             <button
                               onClick={() => openFile(file.file_path)}
-                              className="rounded-full bg-gradient-to-r from-[#4F46E5] to-[#2E7D6B] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
+                              className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-md transition-all"
                             >
                               Open
                             </button>
@@ -7662,7 +7330,7 @@ export default function ProjectPage() {
                               onClick={() =>
                                 deleteFile(file.id, file.file_path)
                               }
-                              className="rounded-full bg-gradient-to-r from-red-500 to-pink-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:scale-105 hover:shadow-lg transition-all"
+                              className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-md hover:scale-105 hover:shadow-md transition-all"
                             >
                               Delete
                             </button>
@@ -7677,7 +7345,7 @@ export default function ProjectPage() {
           )}
 
           {activeTab === "timeline" && (
-            <div className="bg-white border border-[#D9D2C3]/80 rounded-2xl p-8">
+            <div className="bg-white border border-[#D9D2C3]/60 rounded-2xl p-8">
               <h2 className="text-3xl font-bold mb-3">Timeline</h2>
               <p className="text-gray-500 mb-8">
                 Track your project stage from early ideas through to completion.
@@ -7701,7 +7369,7 @@ export default function ProjectPage() {
                             w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border-2
                             ${
                               isCompleted
-                                ? "bg-[#0F172A] border-[#0F172A] text-white"
+                                ? "bg-[#0F172A] border-[#0F172A] text-[#0F172A]"
                                 : isCurrent
                                   ? "border-[#0F172A] text-[#0F172A] bg-white"
                                   : "border-gray-300 text-gray-400 bg-white"
@@ -7741,9 +7409,450 @@ export default function ProjectPage() {
           )}
         </div>
 
+        {showItemModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4">
+            <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-[#D9D2C3]/60 bg-white shadow-2xl">
+              <div className="sticky top-0 z-10 border-b border-[#D9D2C3]/60 bg-white px-7 py-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-[#4F46E5]">
+                      {editingItemId ? "Edit selection" : "Add selection"}
+                    </p>
+                    <h2 className="mt-1 text-2xl font-bold text-[#0F172A]">
+                      {editingItemId ? "Edit Selection or Cost Item" : "Add Selection or Cost Item"}
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {selectedCategory
+                        ? `Category: ${categories.find((category) => category.id === selectedCategory)?.name || "Selected category"}`
+                        : "Choose a category and add the item details."}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetItemForm();
+                      setShowItemModal(false);
+                    }}
+                    className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#F8F6F1]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div id="cost-item-form" className="space-y-6 p-7">
+                <section className="rounded-2xl border border-[#D9D2C3]/60 bg-[#FCFBF8] p-5">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-end">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Supplier product URL optional
+                      </label>
+                      <input
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        placeholder="https://supplier.com/product"
+                        value={supplierUrl}
+                        onChange={(e) => setSupplierUrl(e.target.value)}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={scrapeProductInfo}
+                      disabled={isScrapingProduct}
+                      className="rounded-2xl bg-[#4F46E5] px-5 py-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isScrapingProduct ? "Importing..." : "Import Product Details"}
+                    </button>
+                  </div>
+
+                  <p className="mt-3 text-xs text-slate-500">
+                    Paste a supplier URL if you want Budget My Build to help fill in the product name, price, supplier and product number.
+                  </p>
+                </section>
+
+                {(productImageUrl || productNumber || supplierName || scrapedDescription) && (
+                  <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
+                    <div className="flex gap-5 items-start">
+                      {productImageUrl && (
+                        <img
+                          src={productImageUrl}
+                          alt={itemName || "Product preview"}
+                          className="h-24 w-24 rounded-2xl border border-[#D9D2C3]/60 object-cover"
+                        />
+                      )}
+
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-slate-500">Product preview</p>
+                        <h3 className="mt-1 text-xl font-bold text-[#0F172A]">
+                          {itemName || "Product details imported"}
+                        </h3>
+                        <div className="mt-2 space-y-1 text-sm text-slate-500">
+                          {productNumber && <p>Product #: {productNumber}</p>}
+                          {supplierName && <p>Supplier: {supplierName}</p>}
+                        </div>
+                        {scrapedDescription && (
+                          <p className="mt-3 line-clamp-3 text-sm text-slate-600">
+                            {scrapedDescription}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                <section className="grid gap-4 md:grid-cols-2">
+                  <div className="md:col-span-2">
+                    <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                      Item name
+                    </label>
+                    <input
+                      className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                      placeholder="e.g. Clipsal Iconic USB outlet"
+                      value={itemName}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setItemName(value);
+                        maybeAutoSelectCategory(value);
+                      }}
+                      onBlur={() => maybeAutoSelectCategory()}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                      Quantity
+                    </label>
+                    <input
+                      className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                      placeholder="Quantity"
+                      type="number"
+                      min="1"
+                      value={quantity}
+                      onChange={(e) => setQuantity(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                      Budget category
+                    </label>
+                    <select
+                      className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                      value={selectedCategory}
+                      onChange={(e) => {
+                        if (e.target.value === "__create_new__") {
+                          setShowQuickCategoryModal(true);
+                          setSelectedCategory("");
+                          return;
+                        }
+                        setSelectedCategory(e.target.value);
+                        setSelectedFeatureId("");
+                      }}
+                    >
+                      <option value="">Select category</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                      <option value="__create_new__">+ Create new category</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                      Feature optional
+                    </label>
+                    <select
+                      className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                      value={selectedFeatureName}
+                      onChange={(e) => {
+                        setSelectedFeatureName(e.target.value);
+                        setSelectedFeatureId("");
+                        if (e.target.value !== "Other") {
+                          setCustomBudgetFeatureName("");
+                        }
+                      }}
+                    >
+                      <option value="">Optional: select feature</option>
+                      {featureTypes.map((feature) => (
+                        <option key={feature} value={feature}>
+                          {feature}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedFeatureName === "Other" && (
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Custom feature name
+                      </label>
+                      <input
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        value={customBudgetFeatureName}
+                        onChange={(e) => setCustomBudgetFeatureName(e.target.value)}
+                        placeholder="Add custom feature name"
+                      />
+                    </div>
+                  )}
+                </section>
+
+                {isFlooringItem && (
+                  <section className="rounded-2xl border border-[#2E7D6B]/20 bg-[#2E7D6B]/5 p-5">
+                    <div className="mb-4">
+                      <p className="font-semibold text-[#0F172A]">Flooring quantity helper</p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        Enter the flooring quantity yourself or calculate it from selected rooms.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => setQuantityMethod("manual")}
+                        className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                          quantityMethod === "manual"
+                            ? "border-[#0F172A] bg-[#0F172A] text-white"
+                            : "border-[#D9D2C3]/70 bg-white text-slate-700 hover:bg-[#F8F6F1]"
+                        }`}
+                      >
+                        Enter manually
+                        <span className="mt-1 block text-xs font-normal opacity-80">
+                          Use the normal quantity and sqm fields.
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuantityMethod("rooms");
+                          setUseSqmPricing(true);
+                        }}
+                        className={`rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                          quantityMethod === "rooms"
+                            ? "border-[#0F172A] bg-[#0F172A] text-white"
+                            : "border-[#D9D2C3]/70 bg-white text-slate-700 hover:bg-[#F8F6F1]"
+                        }`}
+                      >
+                        Calculate from rooms
+                        <span className="mt-1 block text-xs font-normal opacity-80">
+                          Use room sqm from the Plans tab.
+                        </span>
+                      </button>
+                    </div>
+
+                    {quantityMethod === "rooms" && (
+                      <div className="mt-4 space-y-4 rounded-2xl border border-[#D9D2C3]/70 bg-white p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-[#0F172A]">
+                              Select rooms for this flooring
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              This uses the room sqm already saved from the Plans tab.
+                            </p>
+                          </div>
+
+                          <div className="w-full sm:w-36">
+                            <label className="mb-1 block text-xs font-semibold text-slate-600">
+                              Wastage %
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full rounded-xl border border-[#D9D2C3]/80 p-3 text-sm"
+                              value={flooringWastagePercent}
+                              onChange={(e) => setFlooringWastagePercent(e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        {planRooms.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-[#D9D2C3]/80 p-4 text-sm text-slate-500">
+                            No rooms have been added yet. Add rooms in the Plans tab first, or keep using manual sqm entry below.
+                          </div>
+                        ) : (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {planRooms
+                              .slice()
+                              .sort((a, b) => getTextValue(a.room_name).localeCompare(getTextValue(b.room_name)))
+                              .map((room) => {
+                                const roomSqm = getDisplaySqm(room);
+                                const checked = selectedFlooringRoomIds.includes(room.id);
+
+                                return (
+                                  <label
+                                    key={room.id}
+                                    className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 text-sm transition ${
+                                      checked
+                                        ? "border-[#2E7D6B] bg-[#2E7D6B]/5"
+                                        : "border-[#D9D2C3]/70 bg-white hover:bg-[#F8F6F1]"
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleFlooringRoom(room.id)}
+                                      className="mt-1"
+                                    />
+                                    <span>
+                                      <span className="block font-semibold text-[#0F172A]">
+                                        {room.room_name || "Unnamed room"}
+                                      </span>
+                                      <span className="block text-xs text-slate-500">
+                                        {room.room_type || "Room"}{room.floor_level ? ` · ${room.floor_level}` : ""}
+                                      </span>
+                                      <span className="mt-1 block text-xs font-semibold text-[#2E7D6B]">
+                                        {roomSqm > 0 ? `${roomSqm.toFixed(2)} sqm` : "No sqm saved"}
+                                      </span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                          </div>
+                        )}
+
+                        <div className="rounded-2xl bg-[#0F172A] p-5 text-white">
+                          <p className="text-sm opacity-70">Recommended amount to order</p>
+                          <p className="mt-1 text-3xl font-bold">
+                            {getFlooringRecommendedSqm().toFixed(1)} sqm
+                          </p>
+                          <p className="mt-2 text-xs opacity-80">
+                            Selected rooms: {getFlooringSelectedAreaSqm().toFixed(2)} sqm
+                            {Number(flooringWastagePercent || 0) > 0
+                              ? ` + ${Number(flooringWastagePercent || 0)}% wastage`
+                              : ""}
+                          </p>
+
+                          {Number(boxCoverageSqm || 0) > 0 && (
+                            <p className="mt-2 text-xs opacity-80">
+                              Box coverage: {boxCoverageSqm} sqm/box · Recommended boxes: {getFlooringRecommendedBoxes()}
+                            </p>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={useFlooringRecommendation}
+                          className="w-full rounded-xl bg-[#2E7D6B] px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#256B5C]"
+                        >
+                          Use Recommended Quantity
+                        </button>
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
+                  <div className="mb-5 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-semibold text-[#0F172A]">Costing method</p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Use a simple item cost or sqm pricing for area-based selections.
+                      </p>
+                    </div>
+
+                    <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={useSqmPricing}
+                        onChange={(e) => setUseSqmPricing(e.target.checked)}
+                      />
+                      Sqm pricing
+                    </label>
+                  </div>
+
+                  {!useSqmPricing ? (
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Estimated cost ($)
+                      </label>
+                      <input
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        placeholder="Estimated cost"
+                        type="number"
+                        value={estimatedCost}
+                        onChange={(e) => setEstimatedCost(e.target.value)}
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                          Area (sqm)
+                        </label>
+                        <input
+                          className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                          placeholder="sqm"
+                          type="number"
+                          value={sqm}
+                          onChange={(e) => setSqm(e.target.value)}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                          Cost per sqm ($)
+                        </label>
+                        <input
+                          className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                          placeholder="Cost per sqm"
+                          type="number"
+                          value={costPerSqm}
+                          onChange={(e) => setCostPerSqm(e.target.value)}
+                        />
+                      </div>
+
+                      <label className="flex items-center gap-3 md:col-span-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={includeWastage}
+                          onChange={(e) => setIncludeWastage(e.target.checked)}
+                        />
+                        Add 10% wastage allowance
+                      </label>
+
+                      <div className="rounded-2xl bg-[#0F172A] p-5 text-white md:col-span-2">
+                        <p className="text-sm opacity-70">Calculated Total</p>
+                        <p className="mt-1 text-3xl font-bold">
+                          ${formatMoney(calculateSqmTotal())}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              <div className="sticky bottom-0 border-t border-[#D9D2C3]/60 bg-white px-7 py-5">
+                <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetItemForm();
+                      setShowItemModal(false);
+                    }}
+                    className="rounded-2xl border border-[#D9D2C3]/70 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-[#F8F6F1]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={createItem}
+                    className="rounded-2xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
+                  >
+                    {editingItemId ? "Save Selection" : "Add Selection"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showQuickCategoryModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 p-4">
-            <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-7 shadow-xl">
               <p className="text-sm font-semibold uppercase tracking-wide text-[#2E7D6B]">
                 Budget category
               </p>
@@ -7751,7 +7860,7 @@ export default function ProjectPage() {
                 Create New Category
               </h2>
               <p className="mt-2 text-sm text-gray-500">
-                Add a category without leaving the cost item you are working on.
+                Create a new budget category for products, allowances or selections.
               </p>
 
               <div className="mt-5 space-y-4">
@@ -7789,7 +7898,7 @@ export default function ProjectPage() {
                     setQuickCategoryName("");
                     setQuickCategoryBudget("");
                   }}
-                  className="rounded-xl border border-[#D9D2C3] bg-white px-5 py-3 font-semibold text-slate-700 hover:bg-[#F2EEE6]"
+                  className="rounded-xl border border-[#D9D2C3] bg-white px-5 py-3 font-semibold text-slate-700 hover:bg-[#F8F6F1]"
                 >
                   Cancel
                 </button>
@@ -7807,7 +7916,7 @@ export default function ProjectPage() {
 
         {noticeModal && (
           <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#0F172A]/40 p-4">
-            <div className="w-full max-w-md rounded-3xl border bg-white p-6 shadow-2xl">
+            <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-xl">
               <div className="mb-4 flex items-start gap-3">
                 <div
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xl ${
@@ -7841,7 +7950,7 @@ export default function ProjectPage() {
               <button
                 type="button"
                 onClick={() => setNoticeModal(null)}
-                className="mt-2 w-full rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg"
+                className="mt-2 w-full rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-md"
               >
                 OK
               </button>
@@ -7851,7 +7960,7 @@ export default function ProjectPage() {
 
         {confirmModal && (
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[#0F172A]/40 p-4">
-            <div className="w-full max-w-md rounded-3xl border bg-white p-6 shadow-2xl">
+            <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-xl">
               <div className="mb-4 flex items-start gap-3">
                 <div
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xl ${
@@ -7876,14 +7985,14 @@ export default function ProjectPage() {
                 <button
                   type="button"
                   onClick={confirmModal.onCancel}
-                  className="flex-1 rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-[#F2EEE6]"
+                  className="flex-1 rounded-xl border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-700 hover:bg-[#F8F6F1]"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={confirmModal.onConfirm}
-                  className="flex-1 rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-lg"
+                  className="flex-1 rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md"
                 >
                   Continue
                 </button>

@@ -6,6 +6,15 @@ import AppNavbar from "../../components/AppNavbar";
 
 type ModalType = "success" | "error" | null;
 
+const cardClass =
+  "rounded-2xl border border-[#D9D2C3]/60 bg-white p-7 shadow-sm";
+
+const fieldClass =
+  "rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4";
+
+const inputClass =
+  "w-full rounded-2xl border border-[#D9D2C3]/70 bg-white px-4 py-3.5 text-[#0F172A] outline-none transition placeholder:text-slate-400 focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10";
+
 export default function AccountPage() {
   const [userEmail, setUserEmail] = useState("");
   const [userId, setUserId] = useState("");
@@ -98,10 +107,10 @@ export default function AccountPage() {
     <>
       <AppNavbar />
 
-      <main className="min-h-screen bg-[#F2EEE6]">
+      <main className="min-h-screen bg-white">
         <div className="mx-auto max-w-6xl px-6 py-10 md:px-8 md:py-12">
           <section className="mb-10">
-            <div className="inline-flex rounded-full border border-[#D9D2C3] bg-white/80 px-4 py-2 text-sm font-semibold text-[#2E7D6B] shadow-sm">
+            <div className="inline-flex rounded-full border border-[#D9D2C3]/70 bg-[#F8F6F1] px-4 py-2 text-sm font-semibold text-[#2E7D6B]">
               Account settings
             </div>
 
@@ -115,10 +124,10 @@ export default function AccountPage() {
             </p>
           </section>
 
-          <div className="grid gap-8 lg:grid-cols-2">
-            <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <section className={cardClass}>
               <div className="mb-6">
-                <p className="text-sm font-semibold text-[#2E7D6B]">
+                <p className="text-sm font-semibold text-[#4F46E5]">
                   Profile
                 </p>
                 <h2 className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -130,17 +139,15 @@ export default function AccountPage() {
               </div>
 
               <div className="space-y-4">
-                <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Email
-                  </p>
+                <div className={fieldClass}>
+                  <p className="text-sm font-semibold text-slate-500">Email</p>
                   <p className="mt-1 font-semibold text-[#0F172A]">
                     {userEmail || "Not set"}
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className={fieldClass}>
+                  <p className="text-sm font-semibold text-slate-500">
                     Account ID
                   </p>
                   <p className="mt-1 break-all text-sm text-slate-700">
@@ -148,9 +155,9 @@ export default function AccountPage() {
                   </p>
                 </div>
 
-                <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Account Created
+                <div className={fieldClass}>
+                  <p className="text-sm font-semibold text-slate-500">
+                    Account created
                   </p>
                   <p className="mt-1 font-semibold text-[#0F172A]">
                     {createdAt
@@ -161,9 +168,9 @@ export default function AccountPage() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+            <section className={cardClass}>
               <div className="mb-6">
-                <p className="text-sm font-semibold text-[#2E7D6B]">
+                <p className="text-sm font-semibold text-[#4F46E5]">
                   Security
                 </p>
                 <h2 className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -180,7 +187,7 @@ export default function AccountPage() {
                   placeholder="New password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full rounded-xl border border-[#D9D2C3] bg-white p-4 outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                  className={inputClass}
                 />
 
                 <input
@@ -188,22 +195,22 @@ export default function AccountPage() {
                   placeholder="Confirm new password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full rounded-xl border border-[#D9D2C3] bg-white p-4 outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                  className={inputClass}
                 />
 
                 <button
                   onClick={updatePassword}
                   disabled={savingPassword}
-                  className="w-full rounded-xl bg-[#4F46E5] px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-[#4338CA] disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="w-full rounded-2xl bg-[#4F46E5] px-5 py-3.5 font-semibold text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-[#4338CA] hover:shadow-md disabled:cursor-not-allowed disabled:bg-slate-300 disabled:hover:translate-y-0"
                 >
-                  {savingPassword ? "Updating..." : "Update Password"}
+                  {savingPassword ? "Updating..." : "Update password"}
                 </button>
               </div>
             </section>
 
-            <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+            <section className={cardClass}>
               <div className="mb-6">
-                <p className="text-sm font-semibold text-[#2E7D6B]">
+                <p className="text-sm font-semibold text-[#4F46E5]">
                   Credits
                 </p>
                 <h2 className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -216,23 +223,23 @@ export default function AccountPage() {
               </div>
 
               <div className="grid gap-4 sm:grid-cols-3">
-                <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Current Credits
+                <div className={fieldClass}>
+                  <p className="text-sm font-semibold text-slate-500">
+                    Current credits
                   </p>
                   <p className="mt-2 text-3xl font-bold text-[#0F172A]">0</p>
                 </div>
 
-                <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Monthly Credits
+                <div className={fieldClass}>
+                  <p className="text-sm font-semibold text-slate-500">
+                    Monthly credits
                   </p>
                   <p className="mt-2 text-3xl font-bold text-[#0F172A]">0</p>
                 </div>
 
-                <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Used This Month
+                <div className={fieldClass}>
+                  <p className="text-sm font-semibold text-slate-500">
+                    Used this month
                   </p>
                   <p className="mt-2 text-3xl font-bold text-[#0F172A]">0</p>
                 </div>
@@ -241,15 +248,15 @@ export default function AccountPage() {
               <button
                 type="button"
                 disabled
-                className="mt-6 rounded-xl border border-[#D9D2C3] bg-[#F2EEE6] px-5 py-3 text-sm font-semibold text-slate-400"
+                className="mt-6 rounded-2xl border border-[#D9D2C3]/70 bg-[#F8F6F1] px-5 py-3 text-sm font-semibold text-slate-400"
               >
-                Buy Credits Coming Soon
+                Buy credits coming soon
               </button>
             </section>
 
-            <section className="rounded-3xl border border-[#D9D2C3]/80 bg-white p-8 shadow-sm">
+            <section className={cardClass}>
               <div className="mb-6">
-                <p className="text-sm font-semibold text-[#2E7D6B]">
+                <p className="text-sm font-semibold text-[#4F46E5]">
                   Subscription
                 </p>
                 <h2 className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -261,14 +268,14 @@ export default function AccountPage() {
                 </p>
               </div>
 
-              <div className="rounded-2xl border border-[#D9D2C3]/80 bg-[#F2EEE6]/70 p-5">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Current Plan
+              <div className="rounded-2xl border border-[#4F46E5]/10 bg-[#F8F7FF] p-5">
+                <p className="text-sm font-semibold text-[#4F46E5]">
+                  Current plan
                 </p>
                 <p className="mt-2 text-2xl font-bold text-[#0F172A]">
                   Free / Trial
                 </p>
-                <p className="mt-2 text-sm text-slate-500">
+                <p className="mt-2 text-sm text-slate-600">
                   Paid plans and credit packs will be connected later.
                 </p>
               </div>
@@ -276,9 +283,9 @@ export default function AccountPage() {
               <button
                 type="button"
                 disabled
-                className="mt-6 rounded-xl border border-[#D9D2C3] bg-[#F2EEE6] px-5 py-3 text-sm font-semibold text-slate-400"
+                className="mt-6 rounded-2xl border border-[#D9D2C3]/70 bg-[#F8F6F1] px-5 py-3 text-sm font-semibold text-slate-400"
               >
-                Manage Subscription Coming Soon
+                Manage subscription coming soon
               </button>
             </section>
           </div>
@@ -286,16 +293,16 @@ export default function AccountPage() {
       </main>
 
       {modalType && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-md rounded-3xl border border-[#D9D2C3] bg-white p-8 shadow-2xl">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0F172A]/45 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-[#D9D2C3]/70 bg-white p-7 shadow-2xl">
             <div
-              className={`mb-4 flex h-12 w-12 items-center justify-center rounded-full text-2xl ${
+              className={`mb-4 flex h-12 w-12 items-center justify-center rounded-2xl text-xl ${
                 modalType === "success"
                   ? "bg-[#2E7D6B]/10 text-[#2E7D6B]"
-                  : "bg-red-100 text-red-700"
+                  : "bg-red-50 text-red-700"
               }`}
             >
-              {modalType === "success" ? "✅" : "⚠️"}
+              {modalType === "success" ? "✓" : "!"}
             </div>
 
             <h2 className="text-2xl font-bold text-[#0F172A]">
@@ -306,7 +313,7 @@ export default function AccountPage() {
 
             <button
               onClick={closeModal}
-              className="mt-6 w-full rounded-xl bg-[#4F46E5] px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
+              className="mt-6 w-full rounded-2xl bg-[#4F46E5] px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
             >
               Close
             </button>

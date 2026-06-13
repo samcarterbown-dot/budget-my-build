@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -29,48 +30,58 @@ export default function MarketingNavbar() {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-white/90 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-8 py-4">
-        <Link href="/" className="text-xl font-bold tracking-tight">
-          BudgetMyBuild
-        </Link>
+    <header className="sticky top-0 z-50 border-b border-[#D9D2C3]/50 bg-white/95 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3 md:px-8">
+        <div className="flex items-center gap-8">
+          <Link href="/" className="flex items-center">
+            <Image
+              src="/Logo.png"
+              alt="Budget My Build"
+              width={300}
+              height={84}
+              priority
+              className="h-auto w-[220px] md:w-[260px]"
+            />
+          </Link>
 
-        <nav className="hidden md:flex items-center gap-2">
-          <a
-            href="#features"
-            className="rounded-full px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-black"
-          >
-            Features
-          </a>
+          <nav className="hidden items-center gap-1 md:flex">
+            <a
+              href="#features"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-[#F8F6F1] hover:text-[#0F172A]"
+            >
+              Features
+            </a>
 
-          <a
-            href="#how-it-works"
-            className="rounded-full px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-black"
-          >
-            How it works
-          </a>
+            <a
+              href="#how-it-works"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-[#F8F6F1] hover:text-[#0F172A]"
+            >
+              How it works
+            </a>
 
-          <a
-            href="#pricing"
-            className="rounded-full px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-black"
-          >
-            Pricing
-          </a>
-        </nav>
+            <a
+              href="#pricing"
+              className="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-[#F8F6F1] hover:text-[#0F172A]"
+            >
+              Pricing
+            </a>
+          </nav>
+        </div>
 
         <div className="flex items-center gap-3">
           {isLoggedIn ? (
             <>
               <Link
                 href="/dashboard"
-                className="rounded-full border px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
               >
                 Dashboard
               </Link>
 
               <button
+                type="button"
                 onClick={handleLogout}
-                className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
+                className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#F8F6F1] hover:text-[#0F172A]"
               >
                 Logout
               </button>
@@ -79,16 +90,16 @@ export default function MarketingNavbar() {
             <>
               <Link
                 href="/login"
-                className="rounded-full border px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-[#F8F6F1] hover:text-[#0F172A]"
               >
                 Login
               </Link>
 
               <Link
                 href="/signup"
-                className="rounded-full bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
+                className="rounded-full bg-[#4F46E5] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA]"
               >
-                Get Started
+                Get started
               </Link>
             </>
           )}
