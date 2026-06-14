@@ -5811,7 +5811,7 @@ export default function ProjectPage() {
                           <button
                             type="button"
                             onClick={exportCostForecastCsv}
-                            className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F7FF] px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F8F7FF]"
+                            className="rounded-2xl border border-[#D9D2C3]/60 bg-white px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:-translate-y-0.5 hover:bg-[#F8F6F1]"
                           >
                             Export CSV
                           </button>
@@ -5821,10 +5821,10 @@ export default function ProjectPage() {
                       <div
                         className={`rounded-2xl px-5 py-4 text-sm font-semibold ${
                           estimateStatus === "current"
-                            ? "bg-[#2E7D6B]/20 text-emerald-100"
+                            ? "bg-[#E8F5F1] text-[#2E7D6B]"
                             : estimateStatus === "outdated"
-                              ? "bg-amber-400/20 text-amber-100"
-                              : "bg-[#F8F7FF] text-slate-600"
+                              ? "bg-[#FFF7E8] text-[#B7791F]"
+                              : "bg-[#F8F6F1] text-slate-600"
                         }`}
                       >
                         {estimateStatus === "current"
@@ -5880,7 +5880,7 @@ export default function ProjectPage() {
                     </div>
 
                     <div className="print-card grid gap-5 lg:grid-cols-3">
-                      <div className="rounded-2xl border-2 border-[#0F172A] bg-[#0F172A] p-7 text-[#0F172A] shadow-md lg:col-span-2">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-7 shadow-sm lg:col-span-2">
                         <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
                           <div>
                             <p className="text-sm font-semibold text-[#4F46E5]">
@@ -5896,7 +5896,7 @@ export default function ProjectPage() {
                             </p>
                           </div>
 
-                          <div className="rounded-2xl bg-[#F8F7FF] px-4 py-3 text-sm text-slate-600">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] px-4 py-3 text-sm text-slate-600">
                             Last generated
                             <span className="mt-1 block font-semibold text-[#0F172A]">
                               {latestEstimate.created_at
@@ -5909,22 +5909,22 @@ export default function ProjectPage() {
                         </div>
                       </div>
 
-                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-7 shadow-sm">
-                        <p className="text-sm font-semibold text-emerald-700">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-7 shadow-sm">
+                        <p className="text-sm font-semibold text-[#2E7D6B]">
                           Expected Planning Range
                         </p>
-                        <p className="mt-2 text-3xl font-bold text-emerald-950">
+                        <p className="mt-2 text-3xl font-bold text-[#0F172A]">
                           ${formatMoney(expectedEstimateLow)} - $
                           {formatMoney(expectedEstimateHigh)}
                         </p>
-                        <p className="mt-3 text-sm leading-6 text-emerald-800">
+                        <p className="mt-3 text-sm leading-6 text-slate-600">
                           A sensible range for early feasibility decisions,
                           including the recommended contingency allowance.
                         </p>
                       </div>
                     </div>
 
-                    <section className="print-card rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-6">
+                    <section className="print-card rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
                       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr] lg:items-center">
                         <div>
                           <p className="text-sm font-semibold text-[#2E7D6B]">
@@ -5944,7 +5944,7 @@ export default function ProjectPage() {
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
-                            <p className="text-xs font-semibold uppercase text-slate-500">
+                            <p className="text-sm font-medium text-slate-500">
                               Bedrooms
                             </p>
                             <p className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -5952,7 +5952,7 @@ export default function ProjectPage() {
                             </p>
                           </div>
                           <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
-                            <p className="text-xs font-semibold uppercase text-slate-500">
+                            <p className="text-sm font-medium text-slate-500">
                               Bathrooms
                             </p>
                             <p className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -5960,7 +5960,7 @@ export default function ProjectPage() {
                             </p>
                           </div>
                           <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
-                            <p className="text-xs font-semibold uppercase text-slate-500">
+                            <p className="text-sm font-medium text-slate-500">
                               Rooms
                             </p>
                             <p className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -5968,7 +5968,7 @@ export default function ProjectPage() {
                             </p>
                           </div>
                           <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4 text-center">
-                            <p className="text-xs font-semibold uppercase text-slate-500">
+                            <p className="text-sm font-medium text-slate-500">
                               Area
                             </p>
                             <p className="mt-1 text-2xl font-bold text-[#0F172A]">
@@ -6019,15 +6019,15 @@ export default function ProjectPage() {
                         </p>
                       </div>
 
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
-                        <p className="text-sm font-semibold text-amber-800">
+                      <div className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-6 shadow-sm">
+                        <p className="text-sm font-semibold text-[#B7791F]">
                           Contingency
                         </p>
-                        <p className="mt-2 text-2xl font-bold text-amber-950">
+                        <p className="mt-2 text-2xl font-bold text-[#0F172A]">
                           ${formatMoney(latestEstimate.contingency_low)} - $
                           {formatMoney(latestEstimate.contingency_high)}
                         </p>
-                        <p className="mt-2 text-xs text-amber-800">
+                        <p className="mt-2 text-xs text-slate-500">
                           Recommended allowance for unknowns and changes.
                         </p>
                       </div>
@@ -6269,12 +6269,12 @@ export default function ProjectPage() {
                             </p>
                           </div>
 
-                          <div className="rounded-2xl bg-[#0F172A] px-6 py-5 text-right text-[#0F172A]">
-                            <p className="text-sm text-[#4F46E5]">Readiness</p>
-                            <p className="mt-1 text-4xl font-bold">
+                          <div className="rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] px-6 py-5 text-right">
+                            <p className="text-sm font-semibold text-slate-500">Readiness</p>
+                            <p className="mt-1 text-4xl font-bold text-[#0F172A]">
                               {latestEstimateConfidence.score}/100
                             </p>
-                            <p className="text-sm text-slate-600">
+                            <p className="text-sm font-semibold text-[#2E7D6B]">
                               {latestEstimateConfidence.label}
                             </p>
                           </div>
