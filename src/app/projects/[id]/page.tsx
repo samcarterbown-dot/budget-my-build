@@ -291,6 +291,9 @@ export default function ProjectPage() {
   const [categories, setCategories] = useState<any[]>([]);
   const [items, setItems] = useState<any[]>([]);
   const [files, setFiles] = useState<any[]>([]);
+  const [categoryAttachments, setCategoryAttachments] = useState<any[]>([]);
+  const [activeAttachmentCategoryId, setActiveAttachmentCategoryId] = useState<string | null>(null);
+  const [uploadingCategoryAttachmentId, setUploadingCategoryAttachmentId] = useState<string | null>(null);
   const [plans, setPlans] = useState<any[]>([]);
   const [planPages, setPlanPages] = useState<any[]>([]);
   const [planRooms, setPlanRooms] = useState<any[]>([]);
@@ -359,8 +362,9 @@ export default function ProjectPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [productCategoryFilter, setProductCategoryFilter] = useState("all");
   const [expandedBudgetCategoryId, setExpandedBudgetCategoryId] = useState<string | null>(null);
+  const [budgetSearch, setBudgetSearch] = useState("");
   const [showItemModal, setShowItemModal] = useState(false);
-  const productStatuses = ["Planned", "Purchased"];
+  const productStatuses = ["Planned", "Quoted", "Purchased"];
 
   const [isEditingProject, setIsEditingProject] = useState(false);
 
@@ -411,6 +415,11 @@ export default function ProjectPage() {
   const [supplierName, setSupplierName] = useState("");
   const [productImageUrl, setProductImageUrl] = useState("");
   const [scrapedDescription, setScrapedDescription] = useState("");
+  const [purchaseType, setPurchaseType] = useState("Owner purchase");
+  const [tradeDiscountPercent, setTradeDiscountPercent] = useState("");
+  const [depositPaid, setDepositPaid] = useState("");
+  const [itemNotes, setItemNotes] = useState("");
+  const [productStatus, setProductStatus] = useState("Planned");
   const [isScrapingProduct, setIsScrapingProduct] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedFeatureId, setSelectedFeatureId] = useState("");
@@ -661,6 +670,29 @@ export default function ProjectPage() {
     });
   }
 
+  function parseMoney(value: any) {
+    return Number(String(value ?? "").replace(/[^0-9.-]/g, "")) || 0;
+  }
+
+  function formatMoneyInput(value: string) {
+    const numericValue = parseMoney(value);
+    if (!numericValue) return "";
+    return formatMoney(numericValue);
+  }
+
+  function getDiscountedItemTotal(item: any) {
+    const grossTotal = calculateItemTotal(item);
+    const discountPercent = Number(item.trade_discount_percent || 0);
+    if (!discountPercent || discountPercent <= 0) return grossTotal;
+
+    const cappedDiscount = Math.min(Math.max(discountPercent, 0), 100);
+    return grossTotal * (1 - cappedDiscount / 100);
+  }
+
+  function getItemBalanceRemaining(item: any) {
+    return Math.max(getDiscountedItemTotal(item) - Number(item.deposit_paid || 0), 0);
+  }
+
   function showNotice(
     message: string,
     title = "Before You Continue",
@@ -704,7 +736,7 @@ export default function ProjectPage() {
   }
 
   function calculateSqmTotal() {
-    const base = Number(sqm || 0) * Number(costPerSqm || 0);
+    const base = Number(sqm || 0) * parseMoney(costPerSqm || 0);
     return includeWastage ? base * 1.1 : base;
   }
 
@@ -828,6 +860,11 @@ export default function ProjectPage() {
     setSupplierName("");
     setProductImageUrl("");
     setScrapedDescription("");
+    setPurchaseType("Owner purchase");
+    setTradeDiscountPercent("");
+    setDepositPaid("");
+    setItemNotes("");
+    setProductStatus("Planned");
     setSelectedCategory("");
     setSelectedFeatureId("");
     setSelectedFeatureName("");
@@ -909,7 +946,7 @@ export default function ProjectPage() {
   }
 
   function hasBudgetValue(value: string) {
-    return value.trim() !== "" && Number(value) > 0;
+    return value.trim() !== "" && parseMoney(value) > 0;
   }
 
   function getDefaultBudgetSplit(total: number) {
@@ -923,7 +960,7 @@ export default function ProjectPage() {
   function handleTotalBudgetChange(value: string) {
     setEditBudgetTarget(value);
 
-    const total = Number(value) || 0;
+    const total = parseMoney(value);
     const hasBuild = hasBudgetValue(editBuildBudget);
     const hasProducts = hasBudgetValue(editProductBudget);
 
@@ -941,20 +978,20 @@ export default function ProjectPage() {
     }
 
     if (hasBuild) {
-      const build = Number(editBuildBudget) || 0;
+      const build = parseMoney(editBuildBudget);
       setEditProductBudget(String(Math.max(total - build, 0)));
       return;
     }
 
-    const products = Number(editProductBudget) || 0;
+    const products = parseMoney(editProductBudget);
     setEditBuildBudget(String(Math.max(total - products, 0)));
   }
 
   function handleBuildBudgetChange(value: string) {
     setEditBuildBudget(value);
 
-    const build = Number(value) || 0;
-    const products = Number(editProductBudget) || 0;
+    const build = parseMoney(value);
+    const products = parseMoney(editProductBudget);
 
     setEditBudgetTarget(String(build + products));
   }
@@ -962,16 +999,16 @@ export default function ProjectPage() {
   function handleProductBudgetChange(value: string) {
     setEditProductBudget(value);
 
-    const build = Number(editBuildBudget) || 0;
-    const products = Number(value) || 0;
+    const build = parseMoney(editBuildBudget);
+    const products = parseMoney(value);
 
     setEditBudgetTarget(String(build + products));
   }
 
   async function saveProjectDetails() {
-    const enteredTotalBudgetValue = Number(editBudgetTarget) || 0;
-    let buildBudgetValue = Number(editBuildBudget) || 0;
-    let productBudgetValue = Number(editProductBudget) || 0;
+    const enteredTotalBudgetValue = parseMoney(editBudgetTarget);
+    let buildBudgetValue = parseMoney(editBuildBudget);
+    let productBudgetValue = parseMoney(editProductBudget);
 
     if (
       enteredTotalBudgetValue > 0 &&
@@ -1152,6 +1189,177 @@ export default function ProjectPage() {
       .eq("project_id", params.id);
 
     setItems(data || []);
+  }
+
+  async function loadCategoryAttachments() {
+    const { data, error } = await supabase
+      .from("project_category_attachments")
+      .select("*")
+      .eq("project_id", params.id)
+      .order("uploaded_at", { ascending: false });
+
+    if (error) {
+      console.error("Failed to load category attachments:", error);
+      return;
+    }
+
+    setCategoryAttachments(data || []);
+  }
+
+  function getCategoryAttachments(categoryId: string) {
+    return categoryAttachments.filter((attachment) => attachment.category_id === categoryId);
+  }
+
+  async function uploadCategoryAttachment(category: any, file: File | null) {
+    if (!file || !project) return;
+
+    const maxFileSize = 25 * 1024 * 1024;
+    if (file.size > maxFileSize) {
+      showNotice("Attachments must be 25MB or smaller.", "Attachment too large", "warning");
+      return;
+    }
+
+    const allowedTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ];
+
+    if (file.type && !allowedTypes.includes(file.type)) {
+      showNotice("Please upload a PDF, image, Word document or Excel spreadsheet.", "Unsupported attachment", "warning");
+      return;
+    }
+
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    const user = userData?.user;
+
+    if (userError || !user) {
+      showNotice("You must be logged in to upload attachments.", "Login required", "warning");
+      return;
+    }
+
+    try {
+      setUploadingCategoryAttachmentId(category.id);
+
+      const originalFileName = file.name;
+
+      const safeFileName = originalFileName
+        .replace(/[^a-zA-Z0-9._-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+
+      const storedFileName = `${Date.now()}-${safeFileName || "attachment"}`;
+
+      // This path is important for hardened Supabase Storage RLS:
+      // storage.foldername(name)[1] must equal auth.uid().
+      const filePath = `${user.id}/${params.id}/${category.id}/${storedFileName}`;
+
+      console.log("Attachment upload debug", {
+        bucket: "project-category-attachments",
+        filePath,
+        firstFolderShouldMatchAuthUid: user.id,
+        projectId: params.id,
+        categoryId: category.id,
+        fileType: file.type,
+        fileSize: file.size,
+      });
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("project-category-attachments")
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: file.type || "application/octet-stream",
+        });
+
+      if (uploadError) {
+        console.error("Supabase storage upload error details", {
+          message: uploadError.message,
+          name: uploadError.name,
+          statusCode: (uploadError as any)?.statusCode,
+          error: uploadError,
+        });
+        throw uploadError;
+      }
+
+      const { error: insertError } = await supabase
+        .from("project_category_attachments")
+        .insert({
+          project_id: params.id,
+          category_id: category.id,
+          file_name: originalFileName,
+          file_url: uploadData?.path || filePath,
+          file_path: uploadData?.path || filePath,
+        });
+
+      if (insertError) {
+        await supabase.storage.from("project-category-attachments").remove([filePath]);
+        throw insertError;
+      }
+
+      await loadCategoryAttachments();
+      showNotice("Attachment uploaded successfully.", "Attachment uploaded", "success");
+    } catch (error: any) {
+      console.error("Category attachment upload failed:", {
+        message: error?.message,
+        name: error?.name,
+        statusCode: error?.statusCode,
+        error,
+      });
+
+      showNotice(error?.message || "Attachment upload failed.", "Upload failed", "error");
+    } finally {
+      setUploadingCategoryAttachmentId(null);
+    }
+  }
+
+  async function openCategoryAttachment(attachment: any) {
+    const { data, error } = await supabase.storage
+      .from("project-category-attachments")
+      .createSignedUrl(attachment.file_path, 60);
+
+    if (error) {
+      showNotice(error.message, "Could not open attachment", "error");
+      return;
+    }
+
+    window.open(data?.signedUrl, "_blank");
+  }
+
+  async function deleteCategoryAttachment(attachment: any) {
+    const confirmed = await askConfirm(
+      `Delete ${attachment.file_name}?\n\nThis cannot be undone.`,
+      "Delete attachment",
+      "error",
+    );
+
+    if (!confirmed) return;
+
+    const { error: storageError } = await supabase.storage
+      .from("project-category-attachments")
+      .remove([attachment.file_path]);
+
+    if (storageError) {
+      showNotice(storageError.message, "Could not delete attachment", "error");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("project_category_attachments")
+      .delete()
+      .eq("id", attachment.id);
+
+    if (error) {
+      showNotice(error.message, "Could not delete attachment", "error");
+      return;
+    }
+
+    await loadCategoryAttachments();
   }
 
   async function loadFiles() {
@@ -2077,7 +2285,7 @@ export default function ProjectPage() {
     const { error } = await supabase.from("project_categories").insert({
       project_id: params.id,
       name: newCategoryName,
-      budget_amount: Number(newCategoryBudget) || 0,
+      budget_amount: parseMoney(newCategoryBudget),
       is_default: false,
     });
 
@@ -2102,7 +2310,7 @@ export default function ProjectPage() {
       .insert({
         project_id: params.id,
         name: quickCategoryName.trim(),
-        budget_amount: Number(quickCategoryBudget) || 0,
+        budget_amount: parseMoney(quickCategoryBudget),
         is_default: false,
       })
       .select("id")
@@ -2126,7 +2334,7 @@ export default function ProjectPage() {
   }
 
   async function saveCategoryBudget(categoryId: string) {
-    const newBudget = Number(editCategoryBudget) || 0;
+    const newBudget = parseMoney(editCategoryBudget);
 
     const { error } = await supabase
       .from("project_categories")
@@ -2152,6 +2360,69 @@ export default function ProjectPage() {
     setEditCategoryBudget("");
   }
 
+  async function deleteCategory(category: any) {
+    const categoryItems = items.filter((item) => item.category_id === category.id);
+
+    const confirmed = await askConfirm(
+      categoryItems.length > 0
+        ? `Delete "${category.name}" and ${categoryItems.length} cost item${categoryItems.length === 1 ? "" : "s"} inside it? This cannot be undone.`
+        : `Delete "${category.name}"? This cannot be undone.`,
+      "Delete budget category",
+      "error",
+    );
+
+    if (!confirmed) return;
+
+    const attachmentsToDelete = getCategoryAttachments(category.id);
+    if (attachmentsToDelete.length > 0) {
+      await supabase.storage
+        .from("project-category-attachments")
+        .remove(attachmentsToDelete.map((attachment) => attachment.file_path));
+    }
+
+    await supabase
+      .from("detected_rooms")
+      .update({ category_id: null })
+      .eq("project_id", params.id)
+      .eq("category_id", category.id);
+
+    await supabase
+      .from("detected_features")
+      .update({ category_id: null })
+      .eq("project_id", params.id)
+      .eq("category_id", category.id);
+
+    if (categoryItems.length > 0) {
+      const { error: itemError } = await supabase
+        .from("project_items")
+        .delete()
+        .eq("category_id", category.id);
+
+      if (itemError) {
+        showNotice(itemError.message);
+        return;
+      }
+    }
+
+    const { error } = await supabase
+      .from("project_categories")
+      .delete()
+      .eq("project_id", params.id)
+      .eq("id", category.id);
+
+    if (error) {
+      showNotice(error.message);
+      return;
+    }
+
+    if (expandedBudgetCategoryId === category.id) setExpandedBudgetCategoryId(null);
+
+    await markEstimateOutdated();
+    await loadItems();
+    await loadCategories();
+    await loadCategoryAttachments();
+  }
+
   async function createItem() {
     if (!itemName.trim()) return;
 
@@ -2171,7 +2442,7 @@ export default function ProjectPage() {
 
     const calculatedTotal = useSqmPricing
       ? calculateSqmTotal()
-      : Number(estimatedCost) || 0;
+      : parseMoney(estimatedCost);
 
     const budgetFeatureName =
       selectedFeatureName === "Other"
@@ -2190,15 +2461,20 @@ export default function ProjectPage() {
       supplier_name: supplierName,
       product_image_url: productImageUrl,
       scraped_description: scrapedDescription,
+      product_status: productStatus,
+      purchase_type: purchaseType,
+      trade_discount_percent: Number(tradeDiscountPercent) || 0,
+      deposit_paid: parseMoney(depositPaid),
+      notes: itemNotes,
       use_sqm_pricing: useSqmPricing,
       sqm: useSqmPricing ? Number(sqm) || 0 : null,
-      cost_per_sqm: useSqmPricing ? Number(costPerSqm) || 0 : null,
+      cost_per_sqm: useSqmPricing ? parseMoney(costPerSqm) : null,
       include_wastage: useSqmPricing ? includeWastage : false,
       quantity: Number(quantity) || 1,
       price_unit: priceUnit,
       box_coverage_sqm: Number(boxCoverageSqm) || null,
-      price_per_sqm: Number(pricePerSqm) || null,
-      price_per_box: Number(pricePerBox) || null,
+      price_per_sqm: parseMoney(pricePerSqm) || null,
+      price_per_box: parseMoney(pricePerBox) || null,
     };
 
     let savedItemId = editingItemId;
@@ -2322,6 +2598,11 @@ export default function ProjectPage() {
     setSupplierName(item.supplier_name || "");
     setProductImageUrl(item.product_image_url || "");
     setScrapedDescription(item.scraped_description || "");
+    setPurchaseType(item.purchase_type || "Owner purchase");
+    setTradeDiscountPercent(String(item.trade_discount_percent || ""));
+    setDepositPaid(item.deposit_paid ? formatMoney(Number(item.deposit_paid || 0)) : "");
+    setItemNotes(item.notes || "");
+    setProductStatus(item.product_status || "Planned");
     setSelectedCategory(item.category_id || "");
     setSelectedFeatureId(item.feature_id || "");
     setSelectedFeatureName(item.feature_name || "");
@@ -2445,6 +2726,7 @@ export default function ProjectPage() {
       loadProject();
       loadCategories();
       loadItems();
+      loadCategoryAttachments();
       loadFiles();
       loadPlans();
       loadPlanPages();
@@ -2471,7 +2753,7 @@ export default function ProjectPage() {
   }, [searchParams]);
 
   const projectTotal = useMemo(() => {
-    return items.reduce((sum, item) => sum + calculateItemTotal(item), 0);
+    return items.reduce((sum, item) => sum + getDiscountedItemTotal(item), 0);
   }, [items]);
 
   const supplierSummaries = useMemo(() => {
@@ -2512,7 +2794,7 @@ export default function ProjectPage() {
 
   const purchasedTotal = items
     .filter((item) => item.product_status === "Purchased")
-    .reduce((sum, item) => sum + calculateItemTotal(item), 0);
+    .reduce((sum, item) => sum + getDiscountedItemTotal(item), 0);
 
   const supplierGrandTotal = supplierSummaries.reduce(
     (sum: number, group: any) => sum + group.total,
@@ -2552,6 +2834,14 @@ export default function ProjectPage() {
       )
     ) {
       return "Windows & Doors";
+    }
+
+    if (
+      ["handle", "hinge", "lock", "latch", "knob", "pull", "hardware"].some((x) =>
+        value.includes(x),
+      )
+    ) {
+      return "Hardware";
     }
 
     if (["robe", "linen", "joinery"].some((x) => value.includes(x))) {
@@ -2792,7 +3082,33 @@ export default function ProjectPage() {
   const remainingBudget = budgetTarget - projectTotal;
   const itemCount = items.length;
 
-  const visibleCategories = categories.slice().sort((a, b) => {
+  const budgetSearchTerm = budgetSearch.trim().toLowerCase();
+
+  const visibleCategories = categories
+    .filter((category) => {
+      if (!budgetSearchTerm) return true;
+
+      const categoryName = String(category.name || "").toLowerCase();
+      const matchingItems = items.filter((item) => item.category_id === category.id);
+      return (
+        categoryName.includes(budgetSearchTerm) ||
+        matchingItems.some((item) =>
+          [
+            item.item_name,
+            item.supplier_name,
+            item.product_number,
+            item.feature_name,
+            item.notes,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(budgetSearchTerm),
+        )
+      );
+    })
+    .slice()
+    .sort((a, b) => {
     const aItemCount = items.filter((item) => item.category_id === a.id).length;
     const bItemCount = items.filter((item) => item.category_id === b.id).length;
 
@@ -2812,6 +3128,13 @@ export default function ProjectPage() {
 
     return aName.localeCompare(bName);
   });
+
+  const activeAttachmentCategory = activeAttachmentCategoryId
+    ? categories.find((category) => category.id === activeAttachmentCategoryId)
+    : null;
+  const activeCategoryAttachments = activeAttachmentCategoryId
+    ? getCategoryAttachments(activeAttachmentCategoryId)
+    : [];
 
   const latestEstimateBreakdown = latestEstimate?.breakdown || {};
   const latestEstimateInputs = latestEstimate?.inputs || {};
@@ -3126,9 +3449,9 @@ export default function ProjectPage() {
   const displayProductBudgetPercent = displayTotalBudget
     ? Math.max(100 - displayBuildBudgetPercent, 0)
     : 0;
-  const editBudgetTotalValue = Number(editBudgetTarget || 0);
-  const editBuildBudgetValue = Number(editBuildBudget || 0);
-  const editProductBudgetValue = Number(editProductBudget || 0);
+  const editBudgetTotalValue = parseMoney(editBudgetTarget);
+  const editBuildBudgetValue = parseMoney(editBuildBudget);
+  const editProductBudgetValue = parseMoney(editProductBudget);
   const editBudgetDifference =
     editBudgetTotalValue - (editBuildBudgetValue + editProductBudgetValue);
 
@@ -4920,7 +5243,7 @@ export default function ProjectPage() {
                                       <div className="flex gap-3">
                                         <button
                                           onClick={() => savePlanRoom(room.id)}
-                                          className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md transition-all"
+                                          className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-white shadow-md hover:shadow-md transition-all"
                                         >
                                           Save
                                         </button>
@@ -5251,7 +5574,7 @@ export default function ProjectPage() {
                               <div className="flex gap-3">
                                 <button
                                   onClick={() => saveFeatureGroup(feature)}
-                                  className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md transition-all"
+                                  className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-white shadow-md hover:shadow-md transition-all"
                                 >
                                   Save
                                 </button>
@@ -5473,6 +5796,18 @@ export default function ProjectPage() {
                   </button>
                 </div>
 
+                <div className="mb-5">
+                  <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                    Search categories or items
+                  </label>
+                  <input
+                    value={budgetSearch}
+                    onChange={(e) => setBudgetSearch(e.target.value)}
+                    placeholder="Search by category, item, supplier, product number or notes"
+                    className="w-full rounded-2xl border border-[#D9D2C3]/80 bg-white px-4 py-3 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                  />
+                </div>
+
                 {visibleCategories.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-[#D9D2C3]/80 bg-[#F8F6F1] p-8 text-center">
                     <h4 className="text-xl font-bold text-[#0F172A]">No categories yet</h4>
@@ -5493,9 +5828,11 @@ export default function ProjectPage() {
                       const categoryItems = items
                         .filter((item) => item.category_id === category.id)
                         .sort((a, b) => String(a.item_name || "").localeCompare(String(b.item_name || "")));
+                      const attachments = getCategoryAttachments(category.id);
+                      const attachmentCount = attachments.length;
 
                       const categoryTotal = categoryItems.reduce(
-                        (sum, item) => sum + calculateItemTotal(item),
+                        (sum, item) => sum + getDiscountedItemTotal(item),
                         0,
                       );
 
@@ -5533,6 +5870,7 @@ export default function ProjectPage() {
                                     <span>Budget <strong className="text-[#0F172A]">${formatMoney(categoryBudget)}</strong></span>
                                     <span>Spent <strong className="text-[#0F172A]">${formatMoney(categoryTotal)}</strong></span>
                                     <span>{categoryItems.length} item{categoryItems.length === 1 ? "" : "s"}</span>
+                                    <span>📎 {attachmentCount} attachment{attachmentCount === 1 ? "" : "s"}</span>
                                   </span>
                                 </span>
                               </button>
@@ -5550,6 +5888,14 @@ export default function ProjectPage() {
                                 </div>
 
                                 <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveAttachmentCategoryId(category.id)}
+                                    className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-[#F8F6F1]"
+                                  >
+                                    📎 Attachments{attachmentCount > 0 ? ` · ${attachmentCount}` : ""}
+                                  </button>
+
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -5571,6 +5917,14 @@ export default function ProjectPage() {
                                     className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-[#F8F6F1]"
                                   >
                                     {isExpanded ? "Hide Items" : "View Items"}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteCategory(category)}
+                                    className="rounded-full border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 shadow-sm transition hover:bg-red-50"
+                                  >
+                                    Delete Category
                                   </button>
                                 </div>
                               </div>
@@ -5600,12 +5954,12 @@ export default function ProjectPage() {
                                       <input
                                         id={`category-budget-${category.id}`}
                                         className="w-32 rounded-xl border border-[#D9D2C3] bg-white px-3 py-2 font-bold text-[#0F172A] shadow-sm focus:border-[#4F46E5] focus:outline-none focus:ring-2 focus:ring-[#4F46E5]/20"
-                                        type="number"
-                                        min="0"
+                                        type="text"
+                                        inputMode="decimal"
                                         value={
                                           editingCategoryId === category.id
                                             ? editCategoryBudget
-                                            : String(categoryBudget || "")
+                                            : formatMoney(categoryBudget)
                                         }
                                         onFocus={() => startEditCategoryBudget(category)}
                                         onChange={(e) => {
@@ -5689,6 +6043,14 @@ export default function ProjectPage() {
                                             {item.use_sqm_pricing && item.sqm && (
                                               <span>{item.sqm} sqm</span>
                                             )}
+                                            {item.purchase_type && <span>{item.purchase_type}</span>}
+                                            {Number(item.trade_discount_percent || 0) > 0 && (
+                                              <span>{Number(item.trade_discount_percent)}% trade discount</span>
+                                            )}
+                                            {Number(item.deposit_paid || 0) > 0 && (
+                                              <span>${formatMoney(Number(item.deposit_paid || 0))} deposit paid</span>
+                                            )}
+                                            {item.notes && <span>{item.notes}</span>}
                                             {item.supplier_url && (
                                               <a
                                                 href={item.supplier_url}
@@ -5729,7 +6091,7 @@ export default function ProjectPage() {
                                         </div>
 
                                         <p className="text-left text-lg font-bold text-[#0F172A] md:text-right">
-                                          ${formatMoney(calculateItemTotal(item))}
+                                          ${formatMoney(getDiscountedItemTotal(item))}
                                         </p>
 
                                         <div className="flex gap-2 md:justify-end">
@@ -6743,10 +7105,14 @@ export default function ProjectPage() {
                             </label>
                             <input
                               className="w-full rounded-xl border bg-white p-4"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               value={editBudgetTarget}
                               onChange={(e) =>
                                 handleTotalBudgetChange(e.target.value)
+                              }
+                              onBlur={() =>
+                                setEditBudgetTarget(formatMoneyInput(editBudgetTarget))
                               }
                             />
                           </div>
@@ -6757,10 +7123,14 @@ export default function ProjectPage() {
                             </label>
                             <input
                               className="w-full rounded-xl border bg-white p-4"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               value={editBuildBudget}
                               onChange={(e) =>
                                 handleBuildBudgetChange(e.target.value)
+                              }
+                              onBlur={() =>
+                                setEditBuildBudget(formatMoneyInput(editBuildBudget))
                               }
                             />
                           </div>
@@ -6771,10 +7141,14 @@ export default function ProjectPage() {
                             </label>
                             <input
                               className="w-full rounded-xl border bg-white p-4"
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               value={editProductBudget}
                               onChange={(e) =>
                                 handleProductBudgetChange(e.target.value)
+                              }
+                              onBlur={() =>
+                                setEditProductBudget(formatMoneyInput(editProductBudget))
                               }
                             />
                           </div>
@@ -6831,7 +7205,7 @@ export default function ProjectPage() {
                       <div className="flex flex-col gap-3 sm:flex-row">
                         <button
                           onClick={saveProjectDetails}
-                          className="rounded-xl bg-[#0F172A] px-6 py-3 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md"
+                          className="rounded-xl bg-[#0F172A] px-6 py-3 text-sm font-semibold text-white shadow-md hover:shadow-md"
                         >
                           Save Project Details
                         </button>
@@ -6867,7 +7241,7 @@ export default function ProjectPage() {
                       </p>
                     </div>
 
-                    <div className="rounded-2xl bg-[#0F172A] px-6 py-5 text-[#0F172A] text-right min-w-60">
+                    <div className="rounded-2xl bg-[#0F172A] px-6 py-5 text-white text-right min-w-60">
                       <p className="text-sm opacity-70">Likely Total</p>
                       <p className="text-3xl font-bold mt-1">
                         ${formatMoney(likelyEstimateTotal)}
@@ -7179,7 +7553,7 @@ export default function ProjectPage() {
                             </p>
                           </div>
 
-                          <div className="rounded-2xl bg-[#0F172A] px-5 py-3 text-[#0F172A] text-right">
+                          <div className="rounded-2xl bg-[#0F172A] px-5 py-3 text-white text-right">
                             <p className="text-xs opacity-70">Supplier Total</p>
                             <p className="text-xl font-bold">
                               ${formatMoney(group.total)}
@@ -7250,7 +7624,7 @@ export default function ProjectPage() {
                               </div>
 
                               <p className="font-bold whitespace-nowrap">
-                                ${formatMoney(calculateItemTotal(item))}
+                                ${formatMoney(getDiscountedItemTotal(item))}
                               </p>
                             </div>
                           ))}
@@ -7369,7 +7743,7 @@ export default function ProjectPage() {
                             w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border-2
                             ${
                               isCompleted
-                                ? "bg-[#0F172A] border-[#0F172A] text-[#0F172A]"
+                                ? "bg-[#0F172A] border-[#0F172A] text-white"
                                 : isCurrent
                                   ? "border-[#0F172A] text-[#0F172A] bg-white"
                                   : "border-gray-300 text-gray-400 bg-white"
@@ -7746,6 +8120,90 @@ export default function ProjectPage() {
                 )}
 
                 <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
+                  <div className="mb-5">
+                    <p className="font-semibold text-[#0F172A]">Purchase tracking</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Track whether this item is still planned, quoted or already purchased.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Purchase status
+                      </label>
+                      <select
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        value={productStatus}
+                        onChange={(e) => setProductStatus(e.target.value)}
+                      >
+                        {productStatuses.map((status) => (
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Purchase type
+                      </label>
+                      <select
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        value={purchaseType}
+                        onChange={(e) => setPurchaseType(e.target.value)}
+                      >
+                        <option value="Owner purchase">Owner purchase</option>
+                        <option value="Builder purchase">Builder purchase</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Trade discount %
+                      </label>
+                      <input
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        placeholder="e.g. 15"
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={tradeDiscountPercent}
+                        onChange={(e) => setTradeDiscountPercent(e.target.value)}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Deposit paid ($)
+                      </label>
+                      <input
+                        className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        placeholder="e.g. 1,000"
+                        type="text"
+                        inputMode="decimal"
+                        value={depositPaid}
+                        onChange={(e) => setDepositPaid(e.target.value)}
+                        onBlur={() => setDepositPaid(formatMoneyInput(depositPaid))}
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                        Notes / comments
+                      </label>
+                      <textarea
+                        className="min-h-24 w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        placeholder="Sizes, colours, finish, material match, supplier notes or anything you want to remember."
+                        value={itemNotes}
+                        onChange={(e) => setItemNotes(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5">
                   <div className="mb-5 flex items-center justify-between gap-4">
                     <div>
                       <p className="font-semibold text-[#0F172A]">Costing method</p>
@@ -7772,9 +8230,11 @@ export default function ProjectPage() {
                       <input
                         className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
                         placeholder="Estimated cost"
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         value={estimatedCost}
                         onChange={(e) => setEstimatedCost(e.target.value)}
+                        onBlur={() => setEstimatedCost(formatMoneyInput(estimatedCost))}
                       />
                     </div>
                   ) : (
@@ -7799,9 +8259,11 @@ export default function ProjectPage() {
                         <input
                           className="w-full rounded-xl border border-[#D9D2C3]/80 bg-white p-4 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
                           placeholder="Cost per sqm"
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           value={costPerSqm}
                           onChange={(e) => setCostPerSqm(e.target.value)}
+                          onBlur={() => setCostPerSqm(formatMoneyInput(costPerSqm))}
                         />
                       </div>
 
@@ -7882,10 +8344,12 @@ export default function ProjectPage() {
                   </label>
                   <input
                     className="w-full rounded-xl border border-[#D9D2C3] bg-white p-4"
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={quickCategoryBudget}
                     onChange={(e) => setQuickCategoryBudget(e.target.value)}
-                    placeholder="e.g. 12000"
+                    onBlur={() => setQuickCategoryBudget(formatMoneyInput(quickCategoryBudget))}
+                    placeholder="e.g. 12,000"
                   />
                 </div>
               </div>
@@ -7909,6 +8373,106 @@ export default function ProjectPage() {
                 >
                   Create Category
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeAttachmentCategory && (
+          <div className="fixed inset-0 z-[75] flex items-center justify-center bg-[#0F172A]/40 p-4">
+            <div className="w-full max-w-2xl rounded-2xl border bg-white p-6 shadow-xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-wide text-[#4F46E5]">Category attachments</p>
+                  <h3 className="mt-1 text-2xl font-bold text-[#0F172A]">
+                    {activeAttachmentCategory.name}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">Upload and store quotes, invoices, receipts, specs or other category documents.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveAttachmentCategoryId(null)}
+                  className="rounded-full border border-[#D9D2C3] bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-[#F8F6F1]"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-[#D9D2C3]/70 bg-[#F8F6F1] p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-[#0F172A]">Upload a category document</p>
+                    <p className="mt-1 text-sm text-slate-500">Add quotes, invoices, receipts, specs, schedules or supplier documents.</p>
+                  </div>
+
+                  <input
+                    id={`active-category-attachment-upload-${activeAttachmentCategory.id}`}
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] || null;
+                      uploadCategoryAttachment(activeAttachmentCategory, file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById(`active-category-attachment-upload-${activeAttachmentCategory.id}`)?.click()}
+                    disabled={uploadingCategoryAttachmentId === activeAttachmentCategory.id}
+                    className="rounded-full bg-[#4F46E5] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {uploadingCategoryAttachmentId === activeAttachmentCategory.id ? "Uploading..." : "Upload attachment"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-sm font-bold uppercase tracking-wide text-[#0F172A]">Attached files</p>
+                  <span className="rounded-full bg-[#F8F6F1] px-3 py-1 text-xs font-semibold text-slate-600">
+                    {activeCategoryAttachments.length} file{activeCategoryAttachments.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+
+                {activeCategoryAttachments.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[#D9D2C3] bg-white p-6 text-center">
+                    <p className="font-semibold text-[#0F172A]">No attachments yet</p>
+                    <p className="mt-1 text-sm text-slate-500">Upload the first quote, invoice, receipt, spec or category document above.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-hidden rounded-2xl border border-[#D9D2C3]/70">
+                    <div className="divide-y divide-[#D9D2C3]/60">
+                      {activeCategoryAttachments.map((attachment) => (
+                        <div key={attachment.id} className="flex flex-col gap-3 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-[#0F172A]">📄 {attachment.file_name}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Uploaded {attachment.uploaded_at ? new Date(attachment.uploaded_at).toLocaleDateString() : "recently"}
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openCategoryAttachment(attachment)}
+                              className="rounded-full bg-[#0F172A] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+                            >
+                              Open
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteCategoryAttachment(attachment)}
+                              className="rounded-full border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -7992,7 +8556,7 @@ export default function ProjectPage() {
                 <button
                   type="button"
                   onClick={confirmModal.onConfirm}
-                  className="flex-1 rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-[#0F172A] shadow-md hover:shadow-md"
+                  className="flex-1 rounded-xl bg-[#0F172A] px-5 py-3 text-sm font-semibold text-white shadow-md hover:shadow-md"
                 >
                   Continue
                 </button>
