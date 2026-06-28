@@ -25,6 +25,7 @@ export default function Dashboard() {
 
   const [projects, setProjects] = useState<any[]>([]);
   const [userId, setUserId] = useState("");
+  const [userEmail, setUserEmail] = useState("");
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [projectToDelete, setProjectToDelete] = useState<any | null>(null);
@@ -124,7 +125,6 @@ export default function Dashboard() {
     return Math.round(((index + 1) / projectStages.length) * 100);
   }
 
-
   function getProjectInitials(name: string) {
     const words = String(name || "")
       .trim()
@@ -135,6 +135,35 @@ export default function Dashboard() {
     if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
 
     return `${words[0][0] || ""}${words[1][0] || ""}`.toUpperCase();
+  }
+
+  function getProjectRole(project: any) {
+    return String(project.member_role || "owner").toLowerCase();
+  }
+
+  function getProjectRoleLabel(project: any) {
+    const role = getProjectRole(project);
+    if (role === "editor") return "Editor";
+    if (role === "viewer") return "Viewer";
+    return "Owner";
+  }
+
+  function getProjectRoleClasses(project: any) {
+    const role = getProjectRole(project);
+
+    if (role === "editor") {
+      return "border-[#4F46E5]/20 bg-[#F8F7FF] text-[#4F46E5]";
+    }
+
+    if (role === "viewer") {
+      return "border-[#D9D2C3]/70 bg-[#F8F6F1] text-slate-600";
+    }
+
+    return "border-[#2E7D6B]/20 bg-[#E8F5F1] text-[#2E7D6B]";
+  }
+
+  function canDeleteProject(project: any) {
+    return getProjectRole(project) === "owner";
   }
 
   function getStageMeta(stage: string) {
@@ -266,11 +295,11 @@ export default function Dashboard() {
     }
 
     setUserId(user.id);
+    setUserEmail(user.email || "");
 
     const { data, error } = await supabase
-      .from("projects")
+      .from("accessible_projects")
       .select("*")
-      .eq("user_id", user.id)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -317,6 +346,15 @@ export default function Dashboard() {
       return;
     }
 
+    await supabase.from("project_members").insert({
+      project_id: newProject.id,
+      user_id: userId,
+      email: userEmail || userId,
+      role: "owner",
+      status: "accepted",
+      accepted_at: new Date().toISOString(),
+    });
+
     const defaultCategories = [
       "Kitchen",
       "Bathroom",
@@ -350,6 +388,11 @@ export default function Dashboard() {
 
   async function deleteProject(project: any) {
     if (!project?.id) return;
+
+    if (!canDeleteProject(project)) {
+      alert("Only the project owner can delete this project.");
+      return;
+    }
 
     try {
       setIsDeletingProject(true);
@@ -433,6 +476,11 @@ export default function Dashboard() {
 
       await supabase
         .from("project_plans")
+        .delete()
+        .eq("project_id", project.id);
+
+      await supabase
+        .from("project_members")
         .delete()
         .eq("project_id", project.id);
 
@@ -987,7 +1035,7 @@ export default function Dashboard() {
                   Project library
                 </p>
                 <h2 className="mt-1 text-3xl font-bold text-[#0F172A]">
-                  Your Projects
+                  Projects
                 </h2>
                 <p className="mt-1 text-slate-500">
                   Open a project to manage budgets, plans, rooms and estimates.
@@ -1017,6 +1065,8 @@ export default function Dashboard() {
                   const currentStage = project.project_stage || "Idea";
                   const stageProgress = getStageProgress(currentStage);
                   const stageMeta = getStageMeta(currentStage);
+                  const roleLabel = getProjectRoleLabel(project);
+                  const roleClasses = getProjectRoleClasses(project);
 
                   return (
                     <div
@@ -1051,6 +1101,12 @@ export default function Dashboard() {
                                   className={`h-2 w-2 rounded-full ${stageMeta.dotClass}`}
                                 />
                                 {stageMeta.label}
+                              </div>
+
+                              <div
+                                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold ${roleClasses}`}
+                              >
+                                👥 {roleLabel}
                               </div>
                             </div>
 
@@ -1126,13 +1182,15 @@ export default function Dashboard() {
                               Open Project →
                             </Link>
 
-                            <button
-                              type="button"
-                              onClick={() => setProjectToDelete(project)}
-                              className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
-                            >
-                              Delete
-                            </button>
+                            {canDeleteProject(project) && (
+                              <button
+                                type="button"
+                                onClick={() => setProjectToDelete(project)}
+                                className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
+                              >
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
