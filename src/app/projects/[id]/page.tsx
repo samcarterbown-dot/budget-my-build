@@ -456,6 +456,13 @@ export default function ProjectPage() {
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [projectMembers, setProjectMembers] = useState<any[]>([]);
+  const [showProjectMembersPanel, setShowProjectMembersPanel] = useState(false);
+  const [inviteMemberEmail, setInviteMemberEmail] = useState("");
+  const [inviteMemberRole, setInviteMemberRole] = useState<"editor" | "viewer">("editor");
+  const [isInvitingMember, setIsInvitingMember] = useState(false);
+
   const [noticeModal, setNoticeModal] = useState<{
     title: string;
     message: string;
@@ -723,6 +730,50 @@ export default function ProjectPage() {
     });
   }
 
+  function normaliseEmail(value: string) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function isValidEmail(value: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normaliseEmail(value));
+  }
+
+  function getMemberName(member: any) {
+    return (
+      member?.profile?.display_name ||
+      member?.display_name ||
+      member?.email ||
+      "Project member"
+    );
+  }
+
+  function getMemberInitials(member: any) {
+    const name = getMemberName(member);
+    const parts = String(name).replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+    return (parts[0]?.[0] || "P").toUpperCase() + (parts[1]?.[0] || "").toUpperCase();
+  }
+
+  function getRoleLabel(role: string) {
+    if (role === "owner") return "Owner";
+    if (role === "viewer") return "Viewer";
+    return "Editor";
+  }
+
+  function getRoleBadgeClass(role: string, status?: string) {
+    if (status === "pending") return "bg-amber-100 text-amber-800";
+    if (role === "owner") return "bg-[#0F172A] text-white";
+    if (role === "viewer") return "bg-slate-100 text-slate-700";
+    return "bg-[#4F46E5]/10 text-[#4F46E5]";
+  }
+
+  function getInvitePermissionText(role: "editor" | "viewer") {
+    if (role === "viewer") {
+      return "Viewers can view the project, files, plans, budget items and cost forecasts, but cannot make changes.";
+    }
+
+    return "Editors can view and update this project, including project details, rooms, plans, budget items, attachments and cost forecasts.";
+  }
+
   function isValidOptionalUrl(value: string) {
     const trimmed = value.trim();
     if (!trimmed) return true;
@@ -881,6 +932,174 @@ export default function ProjectPage() {
     setBoxCoverageSqm("");
     setPricePerSqm("");
     setPricePerBox("");
+  }
+
+  async function loadProjectMembers() {
+    if (!params.id) return;
+
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user || null;
+    setCurrentUserId(user?.id || null);
+
+    const { data, error } = await supabase
+      .from("project_members")
+      .select("*")
+      .eq("project_id", params.id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Failed to load project members:", error);
+      return;
+    }
+
+    const members = data || [];
+    const userIds = members.map((member: any) => member.user_id).filter(Boolean);
+
+    let profilesById: Record<string, any> = {};
+
+    if (userIds.length > 0) {
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("id, email, display_name, avatar_url")
+        .in("id", userIds);
+
+      if (!profilesError) {
+        profilesById = Object.fromEntries((profilesData || []).map((profile: any) => [profile.id, profile]));
+      }
+    }
+
+    setProjectMembers(
+      members.map((member: any) => ({
+        ...member,
+        profile: member.user_id ? profilesById[member.user_id] || null : null,
+      })),
+    );
+  }
+
+  async function inviteProjectMember() {
+    const email = normaliseEmail(inviteMemberEmail);
+
+    if (!isValidEmail(email)) {
+      showNotice("Enter a valid email address.", "Check email", "warning");
+      return;
+    }
+
+    const existingMember = projectMembers.find(
+      (member) => normaliseEmail(member.email) === email,
+    );
+
+    if (existingMember) {
+      showNotice("This person is already listed as a project member or pending invitation.", "Already invited", "warning");
+      return;
+    }
+
+    const confirmed = await askConfirm(
+      `You are about to share this project with:\n\n${email}\n\nPermission: ${getRoleLabel(inviteMemberRole)}\n\n${getInvitePermissionText(inviteMemberRole)}\n\nOnly invite people you trust.`,
+      "Share Project?",
+      "warning",
+    );
+
+    if (!confirmed) return;
+
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+
+    if (!user) {
+      showNotice("You must be logged in to share a project.", "Login required", "warning");
+      return;
+    }
+
+    try {
+      setIsInvitingMember(true);
+
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("id, email, display_name, avatar_url")
+        .eq("email", email)
+        .maybeSingle();
+
+      const isExistingUser = Boolean(profileData?.id);
+
+      const { error } = await supabase.from("project_members").insert({
+        project_id: params.id,
+        user_id: profileData?.id || null,
+        email,
+        role: inviteMemberRole,
+        status: isExistingUser ? "accepted" : "pending",
+        invited_by: user.id,
+        accepted_at: isExistingUser ? new Date().toISOString() : null,
+      });
+
+      if (error) throw error;
+
+      setInviteMemberEmail("");
+      setInviteMemberRole("editor");
+      await loadProjectMembers();
+
+      showNotice(
+        isExistingUser
+          ? `${profileData?.display_name || email} now has access to this project.`
+          : `${email} has been added as a pending project invitation.`,
+        isExistingUser ? "Member added" : "Invitation saved",
+        "success",
+      );
+    } catch (error: any) {
+      console.error("Invite project member failed:", error);
+      showNotice(error?.message || "Could not invite project member.", "Invite failed", "error");
+    } finally {
+      setIsInvitingMember(false);
+    }
+  }
+
+  async function removeProjectMember(member: any) {
+    if (member.role === "owner") {
+      showNotice("The project owner cannot be removed here.", "Owner access", "warning");
+      return;
+    }
+
+    const confirmed = await askConfirm(
+      `${member.email} will immediately lose access to this project.\n\nYou can invite them again later if needed.`,
+      member.status === "pending" ? "Cancel Invitation?" : "Remove Project Member?",
+      "error",
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("project_members")
+      .delete()
+      .eq("id", member.id);
+
+    if (error) {
+      showNotice(error.message, "Could not remove member", "error");
+      return;
+    }
+
+    await loadProjectMembers();
+  }
+
+  async function changeProjectMemberRole(member: any, newRole: "editor" | "viewer") {
+    if (member.role === "owner" || member.role === newRole) return;
+
+    const confirmed = await askConfirm(
+      `Change ${member.email} from ${getRoleLabel(member.role)} to ${getRoleLabel(newRole)}?\n\n${getInvitePermissionText(newRole)}`,
+      "Change Permission?",
+      "warning",
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("project_members")
+      .update({ role: newRole })
+      .eq("id", member.id);
+
+    if (error) {
+      showNotice(error.message, "Could not update permission", "error");
+      return;
+    }
+
+    await loadProjectMembers();
   }
 
   async function loadProject() {
@@ -2724,6 +2943,7 @@ export default function ProjectPage() {
   useEffect(() => {
     if (params.id) {
       loadProject();
+      loadProjectMembers();
       loadCategories();
       loadItems();
       loadCategoryAttachments();
@@ -3135,6 +3355,19 @@ export default function ProjectPage() {
   const activeCategoryAttachments = activeAttachmentCategoryId
     ? getCategoryAttachments(activeAttachmentCategoryId)
     : [];
+
+  const acceptedProjectMembers = projectMembers.filter((member) => member.status === "accepted");
+  const pendingProjectMembers = projectMembers.filter((member) => member.status === "pending");
+  const ownerProjectMember =
+    projectMembers.find((member) => member.role === "owner") ||
+    acceptedProjectMembers[0] ||
+    null;
+  const nonOwnerProjectMembers = projectMembers.filter((member) => member.role !== "owner");
+  const currentProjectMember = projectMembers.find((member) => member.user_id && member.user_id === currentUserId);
+  const canManageProjectMembers =
+    Boolean(project?.user_id && currentUserId && project.user_id === currentUserId) ||
+    currentProjectMember?.role === "owner";
+  const projectMemberTotal = projectMembers.length || 1;
 
   const latestEstimateBreakdown = latestEstimate?.breakdown || {};
   const latestEstimateInputs = latestEstimate?.inputs || {};
@@ -3899,6 +4132,18 @@ export default function ProjectPage() {
                   {project.description ||
                     "Understand your likely costs, organise your plans, track selections and make informed decisions before construction begins."}
                 </p>
+
+                <button
+                  type="button"
+                  onClick={() => setShowProjectMembersPanel(true)}
+                  className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-sm transition hover:border-[#4F46E5]/30 hover:bg-[#F8F7FF] hover:text-[#4F46E5]"
+                >
+                  <span>👥</span>
+                  <span>Project Members</span>
+                  <span className="rounded-full bg-[#F8F6F1] px-2 py-0.5 text-xs text-slate-600">
+                    {projectMemberTotal}
+                  </span>
+                </button>
 
                 <div className="mt-6 grid gap-3 sm:grid-cols-3">
                   <div className={`rounded-2xl border px-4 py-3 ${stageMeta.softBg} ${stageMeta.border}`}>
@@ -8475,6 +8720,239 @@ export default function ProjectPage() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {showProjectMembersPanel && (
+          <div className="fixed inset-0 z-[70] flex justify-end bg-[#0F172A]/40">
+            <button
+              type="button"
+              aria-label="Close project members panel"
+              onClick={() => setShowProjectMembersPanel(false)}
+              className="hidden flex-1 cursor-default md:block"
+            />
+
+            <aside className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl">
+              <div className="border-b border-[#D9D2C3]/60 bg-[#F8F6F1] px-6 py-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-[#4F46E5]">
+                      Collaboration
+                    </p>
+                    <h2 className="mt-1 text-3xl font-bold text-[#0F172A]">
+                      Project Members
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      Share this project with trusted people who need to view or help manage the plan, budget, attachments and forecasts.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowProjectMembersPanel(false)}
+                    className="rounded-full border border-[#D9D2C3]/70 bg-white px-4 py-2 text-sm font-semibold text-[#0F172A] shadow-sm hover:bg-[#F8F6F1]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-6 px-6 py-6">
+                <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-bold text-[#0F172A]">
+                        People with access
+                      </h3>
+                      <p className="text-sm text-slate-500">
+                        {projectMemberTotal} member{projectMemberTotal === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-[#2E7D6B]/10 px-3 py-1 text-xs font-semibold text-[#2E7D6B]">
+                      Private project
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {ownerProjectMember && (
+                      <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#D9D2C3]/60 bg-[#F8F6F1] p-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#0F172A] text-sm font-bold text-white">
+                            {getMemberInitials(ownerProjectMember)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-[#0F172A]">
+                              {getMemberName(ownerProjectMember)}
+                            </p>
+                            <p className="truncate text-xs text-slate-500">
+                              {ownerProjectMember.email}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getRoleBadgeClass("owner")}`}>
+                          Owner
+                        </span>
+                      </div>
+                    )}
+
+                    {nonOwnerProjectMembers.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-[#D9D2C3]/80 bg-white p-6 text-center">
+                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F8F6F1] text-2xl">
+                          👥
+                        </div>
+                        <p className="font-semibold text-[#0F172A]">
+                          No additional members yet
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Invite a partner, builder, designer or family member when you are ready to collaborate.
+                        </p>
+                      </div>
+                    ) : (
+                      nonOwnerProjectMembers.map((member) => (
+                        <div
+                          key={member.id}
+                          className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-4"
+                        >
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold ${member.status === "pending" ? "bg-amber-100 text-amber-800" : "bg-[#4F46E5]/10 text-[#4F46E5]"}`}>
+                                {member.status === "pending" ? "✉" : getMemberInitials(member)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate font-bold text-[#0F172A]">
+                                  {member.status === "pending" ? member.email : getMemberName(member)}
+                                </p>
+                                <p className="truncate text-xs text-slate-500">
+                                  {member.status === "pending"
+                                    ? `Invitation saved ${member.created_at ? new Date(member.created_at).toLocaleDateString() : "recently"}`
+                                    : member.email}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getRoleBadgeClass(member.role, member.status)}`}>
+                                {member.status === "pending" ? "Pending" : getRoleLabel(member.role)}
+                              </span>
+
+                              {canManageProjectMembers && (
+                                <>
+                                  {member.status !== "pending" && (
+                                    <select
+                                      value={member.role}
+                                      onChange={(e) =>
+                                        changeProjectMemberRole(
+                                          member,
+                                          e.target.value as "editor" | "viewer",
+                                        )
+                                      }
+                                      className="rounded-full border border-[#D9D2C3]/70 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+                                    >
+                                      <option value="editor">Editor</option>
+                                      <option value="viewer">Viewer</option>
+                                    </select>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => removeProjectMember(member)}
+                                    className="rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                                  >
+                                    {member.status === "pending" ? "Cancel" : "Remove"}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-[#D9D2C3]/60 bg-white p-5 shadow-sm">
+                  <div className="mb-4">
+                    <h3 className="text-lg font-bold text-[#0F172A]">
+                      Share Project
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Enter an email address and choose what they can do. You will confirm before access is added.
+                    </p>
+                  </div>
+
+                  {canManageProjectMembers ? (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="mb-1 block text-sm font-semibold text-[#0F172A]">
+                          Email address
+                        </label>
+                        <input
+                          value={inviteMemberEmail}
+                          onChange={(e) => setInviteMemberEmail(e.target.value)}
+                          placeholder="name@example.com"
+                          type="email"
+                          className="w-full rounded-2xl border border-[#D9D2C3]/80 bg-white px-4 py-3 text-[#0F172A] outline-none transition focus:border-[#4F46E5] focus:ring-4 focus:ring-[#4F46E5]/10"
+                        />
+                      </div>
+
+                      <div>
+                        <p className="mb-2 text-sm font-semibold text-[#0F172A]">
+                          Permission
+                        </p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <button
+                            type="button"
+                            onClick={() => setInviteMemberRole("editor")}
+                            className={`rounded-2xl border p-4 text-left transition ${
+                              inviteMemberRole === "editor"
+                                ? "border-[#4F46E5] bg-[#F8F7FF] ring-2 ring-[#4F46E5]/10"
+                                : "border-[#D9D2C3]/70 bg-white hover:bg-[#F8F6F1]"
+                            }`}
+                          >
+                            <p className="font-bold text-[#0F172A]">Can Edit</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Can update project details, plans, budget items, attachments and forecasts.
+                            </p>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setInviteMemberRole("viewer")}
+                            className={`rounded-2xl border p-4 text-left transition ${
+                              inviteMemberRole === "viewer"
+                                ? "border-[#4F46E5] bg-[#F8F7FF] ring-2 ring-[#4F46E5]/10"
+                                : "border-[#D9D2C3]/70 bg-white hover:bg-[#F8F6F1]"
+                            }`}
+                          >
+                            <p className="font-bold text-[#0F172A]">Can View</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Can view the project, plans, budgets, files and forecasts without making changes.
+                            </p>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl bg-[#F8F6F1] p-4 text-sm leading-6 text-slate-600">
+                        {getInvitePermissionText(inviteMemberRole)}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={inviteProjectMember}
+                        disabled={isInvitingMember}
+                        className="w-full rounded-2xl bg-[#4F46E5] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#4338CA] disabled:cursor-not-allowed disabled:bg-gray-300"
+                      >
+                        {isInvitingMember ? "Sharing..." : "Continue to Confirmation"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[#D9D2C3]/80 bg-[#F8F6F1] p-5 text-sm text-slate-600">
+                      Only the project owner can invite, remove or change project members.
+                    </div>
+                  )}
+                </section>
+              </div>
+            </aside>
           </div>
         )}
 
